@@ -5,7 +5,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
@@ -30,6 +29,8 @@ import org.slf4j.LoggerFactory;
  * <b>刻意不监听</b> {@code EntityJoinLevelEvent}：按 PLAN WP-2 ③ 定稿，构造
  * {@link EmbodiedAgentHandle} 是 addon / WP-10 门面的职责，库不做隐式兜底注册。
  * 该决策在 {@link AgentLifecyclePlan#onJoin} 中显式表达并已被单测覆盖。
+ *
+ * @author liudongyu
  */
 public final class AgentLifecycle {
 	private static final Logger LOGGER = LoggerFactory.getLogger("embodimentlib.runtime");

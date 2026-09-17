@@ -5,6 +5,8 @@ package com.hexagram2021.embodimentlib.api;
  * <p>
  * 不可变值对象；构造时校验，非法字段抛 {@link IllegalArgumentException}
  * （由配置层 {@code HostConfig#resolveProfile} 捕获并回退默认 profile）。
+ *
+ * @author liudongyu
  */
 public record AgentProfile(String protocol, String baseUrl, String apiKey, String modelName) {
 	/** OpenAI 兼容协议标识（含 Ollama / LM Studio）。 */

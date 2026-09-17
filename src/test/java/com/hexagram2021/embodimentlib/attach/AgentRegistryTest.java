@@ -1,12 +1,9 @@
 package com.hexagram2021.embodimentlib.attach;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.hexagram2021.embodimentlib.api.AgentHostSide;
+import com.hexagram2021.embodimentlib.attach.AgentTestSupport.FakeAgent;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -14,15 +11,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import com.hexagram2021.embodimentlib.api.AgentHostSide;
-import com.hexagram2021.embodimentlib.attach.AgentTestSupport.FakeAgent;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * WP-2 验收标准 ②：注册表 register / get / unregister / 重复 register 关闭旧条目。
  * <p>
  * 对应 PLAN WP-2 验收标准第 2 条。
+ *
+ * @author liudongyu
  */
 class AgentRegistryTest {
 	@Test
@@ -196,8 +192,10 @@ class AgentRegistryTest {
 
 		registry.register(AgentTestSupport.entry("elite", "s-1", AgentHostSide.SERVER, replacement));
 
-		assertSame(replacement, registry.get("s-1").agent(),
-			"旧句柄关闭失败不得阻断替换——否则该 session 永远无法恢复");
+		assertSame(
+				replacement, registry.get("s-1").agent(),
+			"旧句柄关闭失败不得阻断替换——否则该 session 永远无法恢复"
+		);
 	}
 
 	@Test
@@ -219,7 +217,7 @@ class AgentRegistryTest {
 					try {
 						start.await();
 						registry.register(AgentTestSupport.entry("village_npc", "s-1", AgentHostSide.SERVER, agent));
-					} catch (InterruptedException ex) {
+					} catch (InterruptedException interruptedException) {
 						Thread.currentThread().interrupt();
 					} finally {
 						done.countDown();

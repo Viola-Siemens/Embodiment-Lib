@@ -1,11 +1,9 @@
 package com.hexagram2021.embodimentlib.attach;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * {@link ToolCallRecord} 的截断合约单测。
@@ -13,6 +11,8 @@ import org.junit.jupiter.api.Test;
  * 截断在这里是<b>强制</b>的而非调用方自觉：工具输入可能包含玩家聊天内容，
  * PRD §4.1.1 / §6.3 要求此类文本不得随网络包下发到客户端，
  * 因此无论谁读取记录都拿不到超长原文。
+ *
+ * @author liudongyu
  */
 class ToolCallRecordTest {
 	@Test

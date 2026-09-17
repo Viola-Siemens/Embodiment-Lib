@@ -1,21 +1,18 @@
 package com.hexagram2021.embodimentlib.attach;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
 import com.hexagram2021.embodimentlib.attach.AgentTestSupport.FakeAgent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 /**
  * WP-2 验收标准 ④ + ⑤：双端注册表隔离，以及未附着实体不触发任何兜底副作用。
  * <p>
  * 对应 PLAN WP-2 验收标准第 4、5 条，同时覆盖 PRD §4.1.1 / §6.3 的隔离硬约束。
+ *
+ * @author liudongyu
  */
 class AgentSideIsolationTest {
 	@Test

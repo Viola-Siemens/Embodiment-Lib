@@ -1,14 +1,14 @@
 package com.hexagram2021.embodimentlib.attach;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
 import com.hexagram2021.embodimentlib.attach.AgentLifecyclePlan.Action;
 import com.hexagram2021.embodimentlib.attach.AgentTestSupport.FakeAgent;
 import com.hexagram2021.embodimentlib.attach.AgentTestSupport.FakeAttachmentTarget;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * WP-2 验收标准 ③：实体卸载/移除后注册表条目被清理（以桩驱动 {@code unregister} 路径）。
@@ -17,6 +17,8 @@ import org.junit.jupiter.api.Test;
  * <p>
  * 这些用例驱动的是 {@link AgentLifecyclePlan} 的决策函数 + 真实的 {@link AgentRegistry}：
  * 事件处理器（{@code AgentLifecycle}）本身只做转发，其行为完全由这里覆盖的组合决定。
+ *
+ * @author liudongyu
  */
 class AgentLifecycleTest {
 	@Test
@@ -50,7 +52,8 @@ class AgentLifecycleTest {
 		FakeAgent agent = new FakeAgent("server-agent");
 		try {
 			AgentRegistry.server().register(
-				AgentTestSupport.entry("village_npc", "s-1", AgentHostSide.SERVER, agent));
+				AgentTestSupport.entry("village_npc", "s-1", AgentHostSide.SERVER, agent)
+			);
 
 			// 单人游戏里客户端也会收到 leave 事件；若不过滤宿主侧，
 			// 客户端实体的卸载会把服务端 agent 关掉。

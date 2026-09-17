@@ -1,14 +1,15 @@
 package com.hexagram2021.embodimentlib.config;
 
-import com.hexagram2021.embodimentlib.api.AgentProfile;
+import com.google.common.collect.Maps;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
+import com.hexagram2021.embodimentlib.api.AgentProfile;
 import net.neoforged.neoforge.common.ModConfigSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.LinkedHashMap;
+import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
 
@@ -28,6 +29,8 @@ import java.util.Map;
  *       {@code name / protocol / base_url / api_key / model_name} 字段（{@code name} 为路由引用键）。</li>
  * </ul>
  * 详见 PLAN §4 WP-1 与 §8 决策记录。
+ *
+ * @author liudongyu
  */
 @SuppressWarnings("java:S4968")
 public final class HostConfig {
@@ -46,8 +49,9 @@ public final class HostConfig {
 	 * 与 {@link AgentProfileConfig} 的 spec 默认值保持一致，保证任何情况下都有可用 profile。
 	 */
 	private static final AgentProfile FALLBACK_PROFILE = new AgentProfile(
-		AgentProfileConfig.DEFAULT_PROTOCOL, AgentProfileConfig.DEFAULT_BASE_URL,
-		AgentProfileConfig.DEFAULT_API_KEY, AgentProfileConfig.DEFAULT_MODEL_NAME);
+			AgentProfileConfig.DEFAULT_PROTOCOL, AgentProfileConfig.DEFAULT_BASE_URL,
+			AgentProfileConfig.DEFAULT_API_KEY, AgentProfileConfig.DEFAULT_MODEL_NAME
+	);
 
 	private final AgentProfileConfig defaultProfile;
 	private final ModConfigSpec.ConfigValue<List<? extends String>> routing;
@@ -56,14 +60,14 @@ public final class HostConfig {
 	private HostConfig(ModConfigSpec.Builder builder) {
 		this.defaultProfile = new AgentProfileConfig(builder, "default");
 		this.routing = builder
-			.comment("Routing entries: each element is \"agentType=profileName\".",
-				"Absent entries or the special value \"default\" fall back to the [default] profile.")
-			.defineListAllowEmpty("routing", List.of(), () -> "agent_type=profile_name", String.class::isInstance);
+				.comment("Routing entries: each element is \"agentType=profileName\".",
+						"Absent entries or the special value \"default\" fall back to the [default] profile.")
+				.defineListAllowEmpty("routing", List.of(), () -> "agent_type=profile_name", String.class::isInstance);
 		this.profiles = builder
-			.comment("Named profiles: each element is a JSON object string with fields",
-				"name, protocol, base_url, api_key, model_name. \"name\" is the key referenced by routing.",
-				"Example: {\"name\":\"quest_giver\",\"protocol\":\"anthropic\",\"base_url\":\"https://api.anthropic.com\",\"api_key\":\"\",\"model_name\":\"claude-sonnet-4-5\"}")
-			.defineListAllowEmpty("profiles", List.of(), () -> "{\"name\":\"example\",\"protocol\":\"openai\",\"base_url\":\"https://api.openai.com/v1\",\"api_key\":\"\",\"model_name\":\"gpt-5.5\"}", String.class::isInstance);
+				.comment("Named profiles: each element is a JSON object string with fields",
+						"name, protocol, base_url, api_key, model_name. \"name\" is the key referenced by routing.",
+						"Example: {\"name\":\"quest_giver\",\"protocol\":\"anthropic\",\"base_url\":\"https://api.anthropic.com\",\"api_key\":\"\",\"model_name\":\"claude-sonnet-4-5\"}")
+				.defineListAllowEmpty("profiles", List.of(), () -> "{\"name\":\"example\",\"protocol\":\"openai\",\"base_url\":\"https://api.openai.com/v1\",\"api_key\":\"\",\"model_name\":\"gpt-5.5\"}", String.class::isInstance);
 	}
 
 	static HostConfig create(ModConfigSpec.Builder builder) {
@@ -118,8 +122,8 @@ public final class HostConfig {
 		Map<String, AgentProfile> defined = profilesMap();
 		for (Map.Entry<String, String> entry : routes.entrySet()) {
 			String profileName = entry.getValue();
-			if (profileName != null && !profileName.isBlank()
-				&& !DEFAULT_PROFILE_NAME.equals(profileName) && !defined.containsKey(profileName)) {
+			if (profileName != null && !profileName.isBlank() &&
+					!DEFAULT_PROFILE_NAME.equals(profileName) && !defined.containsKey(profileName)) {
 				LOGGER.warn("routing[{}] -> undefined profile '{}'", entry.getKey(), profileName);
 			}
 		}
@@ -132,7 +136,7 @@ public final class HostConfig {
 
 	/** 归一化 profiles 为 {@code Map<profileName, AgentProfile>}；解析失败条目 WARN 并跳过。 */
 	private Map<String, AgentProfile> profilesMap() {
-		Map<String, AgentProfile> result = new LinkedHashMap<>();
+		Map<String, AgentProfile> result = Maps.newLinkedHashMap();
 		for (String json : this.profiles.get()) {
 			try {
 				NamedProfile named = parseProfile(json);
@@ -152,7 +156,7 @@ public final class HostConfig {
 	 * @return 归一化后的 {@code agentType -> profileName} 映射（保持顺序，不变量：无空白键/值）
 	 */
 	static Map<String, String> parseRouting(List<? extends String> entries) {
-		Map<String, String> result = new LinkedHashMap<>();
+		Map<String, String> result = Maps.newLinkedHashMap();
 		for (String entry : entries) {
 			if (entry == null || entry.isBlank()) {
 				LOGGER.warn("Blank routing entry ignored");
@@ -185,7 +189,7 @@ public final class HostConfig {
 	 * @return 命名 profile
 	 * @throws IllegalArgumentException JSON 非法、缺 name 或 profile 字段非法（消息带原因）
 	 */
-	static NamedProfile parseProfile(String json) {
+	static NamedProfile parseProfile(@Nullable String json) {
 		if (json == null || json.isBlank()) {
 			throw new IllegalArgumentException("blank profile JSON");
 		}
@@ -201,8 +205,9 @@ public final class HostConfig {
 		}
 		try {
 			AgentProfile profile = new AgentProfile(
-				stringField(object, "protocol"), stringField(object, "base_url"),
-				stringField(object, "api_key"), stringField(object, "model_name"));
+					stringField(object, "protocol"), stringField(object, "base_url"),
+					stringField(object, "api_key"), stringField(object, "model_name")
+			);
 			return new NamedProfile(name, profile);
 		} catch (IllegalArgumentException ex) {
 			throw new IllegalArgumentException("profile '" + name + "' is invalid: " + ex.getMessage());

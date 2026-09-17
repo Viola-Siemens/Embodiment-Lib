@@ -1,21 +1,21 @@
 package com.hexagram2021.embodimentlib.attach;
 
-import java.util.Objects;
-
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
 import net.minecraft.world.entity.Entity;
 import org.jspecify.annotations.Nullable;
 
+import java.util.Objects;
+
 /**
  * {@code entity -> (agent_type, session_id)} 的解析入口（PLAN WP-2 ③）。
  * <p>
- * 全部方法只做「读附着 + 空串判定」，不做注册表副作用，因此可在无游戏进程的表单下
- * 用桩对象单测（见 {@code AgentAttachmentTest}）。
+ * 全部方法只做「读附着 + 空串判定」，不做注册表副作用，因此可在无游戏进程的表单下用桩对象单测（见 {@code AgentAttachmentTest}）。
  * <p>
  * <b>为什么不用 {@code entity.getData(...)} 直接读</b>：{@code IAttachmentHolder#getData}
- * 在键缺失时会把默认值<b>写入</b>该实体。若库在「只是看一眼」的路径上调用它，
- * 每个被扫描到的实体都会凭空多出两个附着对象。这里统一走
+ * 在键缺失时会把默认值<b>写入</b>该实体。若库在「只是看一眼」的路径上调用它，每个被扫描到的实体都会凭空多出两个附着对象。这里统一走
  * {@link AttachmentTarget#getExistingAttachment} 的无副作用读取契约。
+ *
+ * @author liudongyu
  */
 public final class AgentAttachment {
 	/** 未附着时的空值。 */

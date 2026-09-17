@@ -6,6 +6,8 @@ import java.util.Locale;
 /**
  * 智能体宿主侧（PRD §4.1.1）：SERVER 与 CLIENT 是完全隔离的两套运行时。
  * 本枚举不依赖 FML，便于纯 JUnit 单测；配置文件路径形如 {@code config/embodimentlib/server.toml}。
+ *
+ * @author liudongyu
  */
 public enum AgentHostSide {
 	SERVER,

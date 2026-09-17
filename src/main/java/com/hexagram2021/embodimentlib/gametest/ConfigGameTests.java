@@ -1,7 +1,5 @@
 package com.hexagram2021.embodimentlib.gametest;
 
-import java.util.List;
-
 import com.hexagram2021.embodimentlib.EmbodimentLib;
 import net.minecraft.core.Holder;
 import net.minecraft.gametest.framework.BuiltinTestFunctions;
@@ -10,6 +8,8 @@ import net.minecraft.gametest.framework.TestData;
 import net.minecraft.gametest.framework.TestEnvironmentDefinition;
 import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
+
+import java.util.List;
 
 /**
  * WP-1 的 GameTest：在完整服务端生命周期内验证 mod 侧的 GameTest 注册/发现/执行链。
@@ -22,6 +22,8 @@ import net.neoforged.neoforge.event.RegisterGameTestsEvent;
  * 其 bootstrap（{@code runLoaders}）在 mod 构造前已执行，mod 无法在运行时注册自定义测试函数；
  * 因此这里使用 vanilla 内置函数键 {@code minecraft:always_pass} 走通端到端链路，
  * 配置本身的行为断言由 JUnit（EmbodimentConfigTest）与冒烟日志检查点承担。
+ *
+ * @author liudongyu
  */
 public final class ConfigGameTests {
 	private ConfigGameTests() {

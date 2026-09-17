@@ -1,16 +1,16 @@
 package com.hexagram2021.embodimentlib.attach;
 
-import java.util.ArrayList;
+import com.google.common.collect.Lists;
+import com.hexagram2021.embodimentlib.api.AgentHostSide;
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-
-import com.hexagram2021.embodimentlib.api.AgentHostSide;
-import org.jspecify.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * 运行期智能体注册表（PLAN WP-2 ②）：按 {@code session-id} 维度管理
@@ -25,6 +25,8 @@ import org.slf4j.LoggerFactory;
  * 需要注意的是，<b>「查重 + 替换 + 关闭旧句柄」是复合操作</b>，
  * 这里通过 {@link ConcurrentHashMap#compute} 的原子性保证不会出现
  * 「两个线程都认为自己替换成功、旧句柄被关闭两次/漏关一次」。
+ *
+ * @author liudongyu
  */
 public final class AgentRegistry {
 	/** 服务端注册表实例：集成服务器与专用服务器共用。 */
@@ -181,7 +183,7 @@ public final class AgentRegistry {
 	 * 且期间新注册的条目不会被误关（{@code clear()} 会把并发注册的条目一起吞掉）。
 	 */
 	public void clear() {
-		for (String sessionId : new ArrayList<>(this.bySession.keySet())) {
+		for (String sessionId : Lists.newArrayList(this.bySession.keySet())) {
 			unregister(sessionId);
 		}
 	}

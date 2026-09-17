@@ -2,7 +2,6 @@ package com.hexagram2021.embodimentlib.attach;
 
 import net.minecraft.world.entity.Entity;
 import net.neoforged.neoforge.attachment.AttachmentType;
-import net.neoforged.neoforge.attachment.IAttachmentHolder;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -15,6 +14,8 @@ import org.jspecify.annotations.Nullable;
  * 「读一个字符串 / 写一个字符串 / 空串算未附着」。
  * <p>
  * {@link Entity} 经由 {@link EntityAttachmentTarget} 适配；单测用内存实现即可。
+ *
+ * @author liudongyu
  */
 public interface AttachmentTarget {
 	/**

@@ -1,17 +1,17 @@
 package com.hexagram2021.embodimentlib.attach;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.hexagram2021.embodimentlib.attach.AgentTestSupport.FakeAttachmentTarget;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * WP-2 验收标准 ①：附着读写与「空串视为未附着」判定。
  * <p>
  * 对应 PLAN WP-2 验收标准第 1 条。
+ *
+ * @author liudongyu
  */
 class AgentAttachmentTest {
 	@Test

@@ -1,13 +1,13 @@
 package com.hexagram2021.embodimentlib.attach;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
+import com.google.common.collect.Lists;
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
 import net.neoforged.neoforge.attachment.AttachmentType;
 import org.jspecify.annotations.Nullable;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WP-2 单测用的桩集合。
@@ -19,6 +19,8 @@ import org.jspecify.annotations.Nullable;
  * 因此这里用内存对象精确复刻 {@link AttachmentTarget} 与 {@link EmbodiedAgentHandle} 的契约。
  * <p>
  * 这类桩不进入生产代码，只存在于 test 源集。
+ *
+ * @author liudongyu
  */
 final class AgentTestSupport {
 	private AgentTestSupport() {
@@ -32,29 +34,31 @@ final class AgentTestSupport {
 	 *   <li>{@link #getExistingAttachment} 在键缺失时返回 {@code null}，
 	 *       <b>不</b>写入默认值（这是与 {@code getData} 的关键差异）。</li>
 	 * </ul>
+	 *
+	 * @author liudongyu
 	 */
 	static final class FakeAttachmentTarget implements AttachmentTarget {
 		private final Map<AttachmentType<?>, Object> attachments = new ConcurrentHashMap<>();
 
 		@Override
 		public <T> void setAttachment(AttachmentType<T> type, T value) {
-			attachments.put(type, java.util.Objects.requireNonNull(value, "value"));
+			this.attachments.put(type, java.util.Objects.requireNonNull(value, "value"));
 		}
 
 		@Override
 		@SuppressWarnings("unchecked")
 		public <T> @Nullable T getExistingAttachment(AttachmentType<T> type) {
-			return (T) attachments.get(type);
+			return (T) this.attachments.get(type);
 		}
 
 		/** 模拟 {@code IAttachmentHolder#removeData}，用于验证「清掉附着后条目仍须回收」。 */
 		void removeAttachment(AttachmentType<?> type) {
-			attachments.remove(type);
+			this.attachments.remove(type);
 		}
 
 		/** @return 是否已写入过任何附着（用于断言「纯读取不写入」） */
 		boolean hasAnyAttachment() {
-			return !attachments.isEmpty();
+			return !this.attachments.isEmpty();
 		}
 	}
 
@@ -63,10 +67,12 @@ final class AgentTestSupport {
 	 * <p>
 	 * {@code closeCount} 是 WP-2 多条验收标准的核心断言依据
 	 * （「重复 register 关闭旧条目」「unregister 关闭条目」「幂等」）。
+	 *
+	 * @author liudongyu
 	 */
 	static final class FakeAgent implements EmbodiedAgentHandle {
 		private final String name;
-		private final List<ToolCallRecord> records = new ArrayList<>();
+		private final List<ToolCallRecord> records = Lists.newArrayList();
 		private AgentState state = AgentState.IDLE;
 		private int closeCount;
 
@@ -76,7 +82,7 @@ final class AgentTestSupport {
 
 		@Override
 		public AgentState state() {
-			return state;
+			return this.state;
 		}
 
 		void setState(AgentState state) {
@@ -85,23 +91,23 @@ final class AgentTestSupport {
 
 		@Override
 		public List<ToolCallRecord> recentToolCalls() {
-			return List.copyOf(records);
+			return List.copyOf(this.records);
 		}
 
 		@Override
 		public void close() {
 			// 幂等：重复关闭只累加计数，不抛异常。注册表的替换与注销两条路径
 			// 都可能对同一句柄调用 close()，非幂等实现会造成重复释放。
-			closeCount++;
+			this.closeCount++;
 		}
 
 		int closeCount() {
-			return closeCount;
+			return this.closeCount;
 		}
 
 		@Override
 		public String toString() {
-			return "FakeAgent[" + name + "]";
+			return "FakeAgent[" + this.name + "]";
 		}
 	}
 

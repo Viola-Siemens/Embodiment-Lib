@@ -1,13 +1,13 @@
 package com.hexagram2021.embodimentlib.attach;
 
+import com.google.common.collect.Lists;
+import com.hexagram2021.embodimentlib.api.AgentHostSide;
+import org.jspecify.annotations.Nullable;
+
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
-
-import com.hexagram2021.embodimentlib.api.AgentHostSide;
-import org.jspecify.annotations.Nullable;
 
 /**
  * 注册表条目：一个 {@code (host-side, session-id)} 下的智能体运行对象集合
@@ -28,6 +28,8 @@ import org.jspecify.annotations.Nullable;
  * 因此对可变字段的读写使用 {@code synchronized}。注意队列操作与
  * {@code state} 读写各自同步，不追求跨字段的原子快照——
  * WP-8 只读取展示用信息，允许「状态与记录相差一拍」。
+ *
+ * @author liudongyu
  */
 public final class RegistryEntry {
 	/** 最近工具调用记录的保留条数。 */
@@ -54,8 +56,8 @@ public final class RegistryEntry {
 	 * @throws IllegalArgumentException agentType 或 sessionId 为空白
 	 * @throws NullPointerException 其余必填参数为 null
 	 */
-	public RegistryEntry(String agentType, String sessionId, AgentHostSide side,
-			EmbodiedAgentHandle agent, @Nullable Object toolkit) {
+	public RegistryEntry(@Nullable String agentType, @Nullable String sessionId, AgentHostSide side,
+						 EmbodiedAgentHandle agent, @Nullable Object toolkit) {
 		if (agentType == null || agentType.isBlank()) {
 			throw new IllegalArgumentException("agentType must not be blank");
 		}
@@ -115,8 +117,7 @@ public final class RegistryEntry {
 	 * @param record 工具调用记录
 	 */
 	public synchronized void recordToolCall(ToolCallRecord record) {
-		Objects.requireNonNull(record, "record");
-		this.recentToolCalls.addFirst(record);
+		this.recentToolCalls.addFirst(Objects.requireNonNull(record, "record must not be null"));
 		while (this.recentToolCalls.size() > RECENT_TOOL_CALL_LIMIT) {
 			this.recentToolCalls.removeLast();
 		}
@@ -128,13 +129,14 @@ public final class RegistryEntry {
 	 * @return 不可变列表；无记录时为空列表
 	 */
 	public synchronized List<ToolCallRecord> recentToolCalls() {
-		return List.copyOf(new ArrayList<>(this.recentToolCalls));
+		return List.copyOf(Lists.newArrayList(this.recentToolCalls));
 	}
 
 	/** @return 供日志使用的单行描述（不含 api_key 等敏感字段） */
 	@Override
 	public String toString() {
-		return "RegistryEntry[" + this.side + " " + this.agentType + "/" + this.sessionId
-			+ " state=" + state() + "]";
+		return "RegistryEntry[" +
+				this.side + " " + this.agentType + "/" + this.sessionId + " state=" + state() +
+				"]";
 	}
 }

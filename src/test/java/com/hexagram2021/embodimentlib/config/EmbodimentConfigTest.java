@@ -1,14 +1,9 @@
 package com.hexagram2021.embodimentlib.config;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-import com.hexagram2021.embodimentlib.api.AgentHostSide;
-import com.hexagram2021.embodimentlib.api.AgentProfile;
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.toml.TomlParser;
+import com.hexagram2021.embodimentlib.api.AgentHostSide;
+import com.hexagram2021.embodimentlib.api.AgentProfile;
 import net.neoforged.fml.config.IConfigSpec;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.ModConfigSpec;
@@ -20,12 +15,16 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 /**
  * 双端配置单测：用 night-config 直接解析示例 TOML 并灌入 spec
  * （绕过 FML 加载，等价于验证真实文件解析路径），再断言路由解析行为。
  * <p>
  * 26.1 约束：routing 为 {@code List<String>}（"agentType=profileName"），
  * profiles 为 {@code List<String>}（每个元素一个 JSON 对象字符串，含 name 字段）。
+ *
+ * @author liudongyu
  */
 class EmbodimentConfigTest {
 

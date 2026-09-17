@@ -32,6 +32,8 @@ import net.neoforged.neoforge.registries.NeoForgeRegistries;
  * {@code neoforge:attachment_types} 注册表；注册表尚未就绪前调用
  * {@code entity.setData(...)} 会被 {@code AttachmentHolder#validateAttachmentType}
  * 拒绝（开发环境下抛 {@link IllegalArgumentException}）。
+ *
+ * @author liudongyu
  */
 public final class AttachmentTypes {
 	/** 附着类型注册器（命名空间 {@code embodimentlib}）。 */
@@ -41,9 +43,8 @@ public final class AttachmentTypes {
 	/**
 	 * 智能体类型附着键。
 	 * <p>
-	 * 默认值为{@link AgentAttachment#UNKNOWN_TYPE empty}（空串），
-	 * 与 {@link AgentAttachment#isAttached} 的「空串视为未附着」判定一致，
-	 * 使「附着后忘记赋值」的实体被正确识别为未附着，而非被误认为类型名为 {@code "unknown"} 的智能体。
+	 * 默认值为{@link AgentAttachment#EMPTY empty}（空串），
+	 * 与 {@link AgentAttachment#isAttached} 的「空串视为未附着」判定一致。
 	 */
 	public static final DeferredHolder<AttachmentType<?>, AttachmentType<String>> AGENT_TYPE =
 		REGISTER.register("agent_type", () -> AttachmentType.builder(() -> "").build());
