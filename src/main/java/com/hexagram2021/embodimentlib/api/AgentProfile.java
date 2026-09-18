@@ -1,5 +1,8 @@
 package com.hexagram2021.embodimentlib.api;
 
+import org.jetbrains.annotations.Contract;
+import org.jspecify.annotations.Nullable;
+
 /**
  * 模型提供方 Profile（PRD §4.3）：protocol + base_url + api_key + model_name。
  * <p>
@@ -8,7 +11,7 @@ package com.hexagram2021.embodimentlib.api;
  *
  * @author liudongyu
  */
-public record AgentProfile(String protocol, String baseUrl, String apiKey, String modelName) {
+public record AgentProfile(String protocol, String baseUrl, @Nullable String apiKey, String modelName) {
 	/** OpenAI 兼容协议标识（含 Ollama / LM Studio）。 */
 	public static final String PROTOCOL_OPENAI = "openai";
 	/** Anthropic 协议标识。 */
@@ -17,9 +20,16 @@ public record AgentProfile(String protocol, String baseUrl, String apiKey, Strin
 	/**
 	 * 紧凑构造器：校验字段合法性。
 	 *
+	 * @param protocol 协议名
+	 * @param baseUrl 请求地址
+	 * @param apiKey api key，可以为空
+	 * @param modelName 模型名称
+	 *
 	 * @throws IllegalArgumentException protocol 为空/未知、base_url 为空或 model_name 为空
 	 */
-	public AgentProfile {
+	@SuppressWarnings("java:S6207")
+	@Contract("null, _, _, _ -> fail; _, null, _, _ -> fail; _, _, _, null -> fail")
+	public AgentProfile(@Nullable String protocol, @Nullable String baseUrl, @Nullable String apiKey, @Nullable String modelName) {
 		if (protocol == null || protocol.isBlank()) {
 			throw new IllegalArgumentException("protocol must not be blank");
 		}
@@ -32,6 +42,10 @@ public record AgentProfile(String protocol, String baseUrl, String apiKey, Strin
 		if (modelName == null || modelName.isBlank()) {
 			throw new IllegalArgumentException("model_name must not be blank");
 		}
+		this.protocol = protocol;
+		this.baseUrl = baseUrl;
+		this.apiKey = apiKey;
+		this.modelName = modelName;
 	}
 
 	/**

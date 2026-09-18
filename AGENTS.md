@@ -50,12 +50,14 @@ Embodiment-Lib
 │   │   │   ├── EmbodimentLib.java      # 主类，MODID="embodimentlib"
 │   │   │   ├── api/                    # WP-1：AgentHostSide、AgentProfile
 │   │   │   ├── config/                 # WP-1：EmbodimentConfig、HostConfig、AgentProfileConfig
-│   │   │   ├── attach/                 # WP-2：AttachmentTypes、AgentAttachment、AgentRegistry、RegistryEntry、AgentLifecycle(/Plan)
+│   │   │   ├── attach/                 # WP-2：AttachmentTypes、AgentAttachment、AgentRegistry、RegistryEntry、AgentLifecycle(/Plan)、EmbodiedAgentHandle
+│   │   │   ├── runtime/                # WP-3：EmbodiedAgent、AgentLoop、ThreadBridge、ToolBridge、ExecutionGuard、ModelFactory、GameThreadExecutor
 │   │   │   └── gametest/               # WP-1：ConfigGameTests（冒烟）
 │   │   ├── resources/pack.mcmeta       # pack_format 84 + min/max_format（26.1 schema）
 │   │   └── templates/META-INF/neoforge.mods.toml   # 占位符模板，构建时展开
 │   └── test/java/com/hexagram2021/embodimentlib/   # 验收唯一依据（JUnit 5）
-│       ├── api/ config/ attach/        # 与主源集同构
+│       ├── api/ config/ attach/ runtime/           # 与主源集同构
+│       │   └── runtime/                # 另含测试桩 FakeModel（脚本化模型）、RecordingExecutor（手动 drain 游戏线程桩）
 ├── src/generated/resources/            # datagen 输出（当前为空）
 ├── build.gradle        # moddev 2.0.141；JarInJar 打入 AgentScope；publish 到 repo/
 ├── settings.gradle     # rootProject.name='embodimentlib'
@@ -74,8 +76,10 @@ Embodiment-Lib
 | 构建             | Gradle 9.2.1 wrapper + `net.neoforged.moddev` 2.0.141                                      |
 | Mod ID / Group | `embodimentlib` / `com.hexagram2021.embodimentlib`                                         |
 | 版本             | `0.1.0+mc26.1.2`                                                                           |
-| 内嵌运行时          | `io.agentscope:agentscope-harness:2.0.1` + `agentscope-core:2.0.1`（JarInJar，范围 `[2.0.1,)`） |
+| 内嵌运行时          | `io.agentscope:agentscope-harness:2.0.1` + `agentscope-core:2.0.1` + `agentscope-extensions-model-openai:2.0.1` + `agentscope-extensions-model-anthropic:2.0.1`（全部 JarInJar，范围 `[2.0.0,)`） |
 | 许可证            | Artistic-2.0（内嵌 AgentScope 为 Apache-2.0）                                                   |
+
+⚠️ **模型客户端在扩展模块里**：`agentscope-core` / `agentscope-harness` 的 jar **不含**任何 OpenAI/Anthropic 实现类；官方拆为 `agentscope-extensions-model-openai` / `-anthropic` 两个 artifact，经 `io.agentscope.core.model.spi.ModelProvider` SPI 发现。核对该包 API 时源码在 `../Sources-26.1.2/io/agentscope/extensions/model/`（PLAN §8 决策 15）。
 
 ⚠️ **环境注意**：系统默认 `JAVA_HOME` 指向 JDK 17；跑 Gradle 前需临时切到 JDK 25（见 §5 命令前缀），否则工具链解析会失败或下载额外 JDK。
 
@@ -95,7 +99,7 @@ Embodiment-Lib
 | 发布本地 Maven       | `.\gradlew.bat publish`                              | 输出到 `repo/`（坐标见 §4）                                                                     |
 | 检查产物             | `jar tf build\libs\embodimentlib-0.1.0+mc26.1.2.jar` | 查看 jar 内条目                                                                              |
 
-**冒烟检查点**（以 `runGameTestServer` 日志为准）：Mod List 出现 `Embodiment Lib`；`META-INF/jarjar/` 两个 AgentScope jar 被发现；无 `ERROR`/`FATAL`/mod 相关 `WARN`；进程正常终止（exit 0）。
+**冒烟检查点**（以 `runGameTestServer` 日志为准）：Mod List 出现 `Embodiment Lib`；`META-INF/jarjar/` **四个** AgentScope jar 被发现（core / harness / extensions-model-openai / extensions-model-anthropic）；无 `ERROR`/`FATAL`/mod 相关 `WARN`；进程正常终止（exit 0）。
 
 ## 6. 核心概念速览（上手必读）
 
@@ -110,7 +114,9 @@ Embodiment-Lib
 | 会话目录            | 服务器端在**世界目录**下、客户端在本地 config 下；两棵树永不合并                                                                                                                                                                                                                                                                                               |
 | 工具契约            | 输入 = 工具自定 JSON；输出 = 纯文本 observation 回喂 LLM；失败（异常/超时/无目标/被拒）**转文本，禁止抛异常**                                                                                                                                                                                                                                                             |
 | 工具绑定            | 工具永远绑定**执行时所在实体**（`ToolContext`），LLM 无需传实体                                                                                                                                                                                                                                                                                           |
-| 线程规则            | LLM HTTP 在 IO 池；工具体**必须**桥到游戏线程（SERVER=服务器线程 / CLIENT=客户端线程）；`meta.wait` 非阻塞，绝不 park 游戏线程                                                                                                                                                                                                                                            |
+| 线程规则            | LLM HTTP 在 IO 池；工具体**必须**桥到游戏线程（SERVER=服务器线程 / CLIENT=客户端线程）；`meta.wait` 非阻塞，绝不 park 游戏线程。实现见 `runtime/ThreadBridge`：**派发不含等待**，等待发生在 IO 线程侧（`CompletableFuture#get(timeout)`），方向由 `ThreadBridge.executorFor(side, server, client)` 唯一裁决 |
+| 运行时包装（`runtime/`） | WP-3：`EmbodiedAgent`（包装 `HarnessAgent`，实现 `EmbodiedAgentHandle`；`reply()` 返回 `Mono<String>`）；`AgentLoop`（`REACT_STEP` 逐步环 P0 / `BATCH_TOOLS` 批量环 P1；默认 12 步）；`ToolBridge`（工具异常/超时/空/null → 文本 observation，**永不抛异常**；`null` 与「超时」用引用比较哨兵区分）；`ExecutionGuard`（**忙碌即拒绝而非排队**，用 CAS 不用可重入锁——同线程重入会被误判为空闲）；`ModelFactory`（按 protocol 造 `OpenAIChatModel`/`AnthropicChatModel`） |
+| `GameThreadExecutor` | WP-3 测试缝：把「排到本端游戏线程」抽为端口（真实实现 = `server.execute` / `Minecraft#execute`），使桥接的**方向**与**零 park** 可在无游戏进程下单测（`RecordingExecutor.manual()` + `drain()`） |
 | Griefing        | 破坏性动作（挖/放/攻击…）先 post `EntityMobGriefingEvent`，被拒 → 返回 `"griefing denied"`                                                                                                                                                                                                                                                            |
 | 日志              | SLF4J，logger 名空间 `embodimentlib`（子域 `embodimentlib.config/runtime/tool/command`）                                                                                                                                                                                                                                                     |
 
@@ -118,12 +124,13 @@ Embodiment-Lib
 
 1. **PRD 是需求唯一权威**；PLAN.md 是它的可执行分解——11 个工作包（WP-0…WP-10），MECE：每个 WP 独立、可单测、有验收清单与验证命令。
 2. **执行顺序**：先 P0 链（WP-1→WP-5→WP-6→WP-2→WP-3→WP-8→WP-9），再 WP-4/WP-7/P1 项，最后 WP-10；依赖图见 PLAN §5。
-3. **当前进度**：WP-0 ✅、WP-1 ✅（配置系统：`AgentHostSide` + ModConfigSpec 双端 TOML + Profile 路由——routing 为 List、profiles 为 JSON 列表，见 §6 配置行）、WP-2 ✅（实体附着 + 双端注册表：`attach/` 包提供 `agent_type`/`session_id` 附着、`AgentRegistry` 双端单例、`RegistryEntry`、`AgentLifecycle` 生命周期钩子）；下一步 **WP-3**（`HarnessAgent` 包装 + 双环 + 线程桥接）。
+3. **当前进度**：WP-0 ✅、WP-1 ✅（配置系统：`AgentHostSide` + ModConfigSpec 双端 TOML + Profile 路由——routing 为 List、profiles 为 JSON 列表，见 §6 配置行）、WP-2 ✅（实体附着 + 双端注册表：`attach/` 包提供 `agent_type`/`session_id` 附着、`AgentRegistry` 双端单例、`RegistryEntry`、`AgentLifecycle` 生命周期钩子）、WP-3 ✅（代理运行时：`runtime/` 包提供 `EmbodiedAgent`、`AgentLoop` 双环、`ThreadBridge`/`ToolBridge` 游戏线程桥接、`ExecutionGuard` 串行化、`ModelFactory` 模型工厂）；下一步 **WP-5**（工具契约与基础设施）。
+   ⚠️ **注意 WP-4 与 WP-5 的依赖顺序**：PLAN §5.1 的 P0 链是 WP-1→WP-5→WP-6→WP-2→WP-3→WP-8→WP-9，WP-3 已落地但 WP-5 尚未开始；WP-3 通过 `@Nullable Toolkit` 参数与 `ToolBridge` 端口解耦，WP-5 落地后无需改动 WP-3 代码。
 4. **测试与验收标准（重要）**：**验收以 `.\gradlew.bat test` 单测全绿为准**，不得把 GameTest 作为验收依据。26.1 起**没有 `@GameTest` 注解**，且 `TEST_FUNCTION` 注册表 bootstrap 早于 mod 构造，**mod 无法注册自定义测试函数**，因此 GameTest 只能做「注册链/生命周期」的冒烟验证（现有 `embodimentlib:wiring_smoke` 用 vanilla 内置 `minecraft:always_pass` 函数键走通链路），无法承载真实行为断言。**所有行为断言一律写 JUnit 单测**（PLAN §8 决策 10）；`runGameTestServer` 仅作启动冒烟，不计入验收。
 5. 每个 WP 完成 = 验收标准全部勾选 + `.\gradlew.bat test` 全绿 + **更新 PLAN.md 该 WP 状态行**（⬜/🚧/✅）。
-6. 不确定的第三方 API（主要是 AgentScope 2.0.1 签名）：先阅读源码和 JavaDoc 核对再落码，禁止臆造。
+6. 不确定的第三方 API（主要是 AgentScope 2.0.1 签名）：先阅读源码和 JavaDoc 核对再落码，禁止臆造。**源码一律从 `../Sources-26.1.2/` 读**（见 §9），不要在源码缺失时自行解压/反编译 jar——直接告诉用户缺哪个依赖的源码。
 7. 安全红线（违反即失败）：API key 只存在于做推理的一端，**不得**出现在网络包、日志、命令输出；双端配置/会话/注册表隔离；工具失败不抛异常；游戏线程不 park。
-8. 测试中**不得发起真实 LLM 调用**：工具用 `ToolContext` 直驱，循环用桩模型（PLAN WP-3 的 `FakeModel`）。
+8. 测试中**不得发起真实 LLM 调用**：工具用 `ToolContext` 直驱，循环用桩模型（PLAN WP-3 已提供 `runtime/FakeModel`）。
 
 ## 8. 相关文档入口
 
@@ -133,3 +140,10 @@ Embodiment-Lib
 # 9. 相关代码
 
 依赖库的源代码（包括 Minecraft、NeoForge、Night Config 等）均位于 `../Sources-26.1.2/` 目录中，如有缺失，直接告知用户，**不要自行解压 jar 包**。
+
+AgentScope 相关源码位置：
+
+- `../Sources-26.1.2/io/agentscope/core/` — 核心（agent/model/message/tool/state/skill）
+- `../Sources-26.1.2/io/agentscope/harness/agent/HarnessAgent.java` — 被包装的 agent 与其 `Builder`
+- `../Sources-26.1.2/io/agentscope/extensions/model/openai/` — `OpenAIChatModel`（及 `compat/` 下的 deepseek/glm/kimi/minimax 兼容层）
+- `../Sources-26.1.2/io/agentscope/extensions/model/anthropic/` — `AnthropicChatModel`

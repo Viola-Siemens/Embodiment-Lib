@@ -100,20 +100,33 @@ dependencies {
     // Version pinned to 2.0.1 per PRD; 2.0.1 confirmed present on Maven Central.
     jarJar(implementation("io.agentscope:agentscope-harness:2.0.1") {
         version {
-            strictly '[2.0.1,)'
+            strictly '[2.0.0,)'
             prefer '2.0.1'
         }
     })
     jarJar(implementation("io.agentscope:agentscope-core:2.0.1") {
         version {
-            strictly '[2.0.1,)'
+            strictly '[2.0.0,)'
+            prefer '2.0.1'
+        }
+    })
+    // WP-3: concrete model clients live in separate extension modules (core/harness ship no provider
+    // implementations). Required for OpenAI-compatible and Anthropic profiles (PRD §4.3).
+    jarJar(implementation("io.agentscope:agentscope-extensions-model-openai:2.0.1") {
+        version {
+            strictly '[2.0.0,)'
+            prefer '2.0.1'
+        }
+    })
+    jarJar(implementation("io.agentscope:agentscope-extensions-model-anthropic:2.0.1") {
+        version {
+            strictly '[2.0.0,)'
             prefer '2.0.1'
         }
     })
 }
 
-var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
-    var replaceProperties = [
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {    var replaceProperties = [
             minecraft_version      : minecraft_version,
             minecraft_version_range: minecraft_version_range,
             neo_version            : neo_version,

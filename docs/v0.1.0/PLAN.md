@@ -32,10 +32,10 @@
 
 | WP | 工作包 | 覆盖 PRD 章节 | 优先级 |
 |---|---|---|---|
-| WP-0 | 构建基线、JarInJar 打包与元数据 | §6.1, §6.2(打包), §6.6 | P0 |
-| WP-1 | 配置系统：`AgentHostSide` + 双端 TOML + Profile 路由 | §4.1.1, §4.3, §6.4(配置) | P0 |
-| WP-2 | 实体附着（Attachment）+ 双端 Agent 注册表 | §4.1.2, §4.1.3, §6.3(注册表), §6.4(附着) | P0 |
-| WP-3 | 代理运行时包装（HarnessAgent 包装 + 双环 + 线程桥接） | §4.2, §6.2(运行时), §6.3(线程) | P0 |
+| WP-0 | 构建基线、JarInJar 打包与元数据 ✅ | §6.1, §6.2(打包), §6.6 | P0 |
+| WP-1 | 配置系统：`AgentHostSide` + 双端 TOML + Profile 路由 ✅ | §4.1.1, §4.3, §6.4(配置) | P0 |
+| WP-2 | 实体附着（Attachment）+ 双端 Agent 注册表 ✅ | §4.1.2, §4.1.3, §6.3(注册表), §6.4(附着) | P0 |
+| WP-3 | 代理运行时包装（HarnessAgent 包装 + 双环 + 线程桥接）✅ | §4.2, §6.2(运行时), §6.3(线程) | P0 |
 | WP-4 | 会话与记忆持久化（session-id 维度） | §4.4, §6.4(会话) | P0 |
 | WP-5 | 工具契约与基础设施（含权限钩子、Griefing 集成） | §4.5(契约), §4.6(权限), §4.9, §6.2(工具) | P0（权限钩子 P1） |
 | WP-6 | P0 内置工具（12 个） | §4.5 #1,2,3,6,7,9,10,11,13,16,22,23；§5 P0 | P0 |
@@ -146,7 +146,8 @@ com.hexagram2021.embodimentlib
 - 26.1 起**没有 `@GameTest` 注解**，且 `TEST_FUNCTION` 为 simple registry、其 bootstrap（`runLoaders`）早于 mod 构造，**mod 无法注册自定义测试函数**（§8 决策 10 已实测）。因此 GameTest 无法承载真实行为断言，只保留「注册链/生命周期」冒烟价值。
 - 所有行为断言一律写成 JUnit 单测：世界内行为（工具、附着、命令、实体）通过**纯逻辑抽取 + 依赖注入/桩对象**使其可在无游戏进程的表单下断言——需要世界交互的部分，把逻辑拆为纯函数（如 `InspectReportBuilder`、路由解析、序列化）后单测，需要实体/世界对象的接口以桩实现替代。
 - 现有 `embodimentlib:wiring_smoke`（vanilla `minecraft:always_pass`）**仅作启动冒烟**，不计入验收；`runGameTestServer` 只用于确认 mod 能正常起停。
-- **测试中不得发起真实 LLM 调用**：工具单测直接以 `ToolContext` 驱动工具；循环测试用桩 HarnessAgent / mock 模型（WP-3 提供 `FakeModel` 测试钩子）。
+- **测试中不得发起真实 LLM 调用**：工具单测直接以 `ToolContext` 驱动工具；循环测试用桩模型。WP-3 已提供 `runtime/FakeModel`（脚本化 `Model`：`replyWith` / `callTool` / `failWith`）与 `runtime/RecordingExecutor`（手动 drain 的游戏线程桩）两个测试钩子，后续 WP 直接复用。
+- **测试缝约定**：凡是构造需要真实运行时/网络/游戏进程的组件，都把纯逻辑抽成可独立构造的类并以端口注入（WP-2 `AttachmentTarget`、WP-3 `ModelFactory`/`GameThreadExecutor`/`ExecutionGuard`）。薄编排层（如 `EmbodiedAgent.create`）不写单测，改由被抽取的类覆盖。
 - 每个 WP 的验收标准含具体测试用例清单。
 
 ---
@@ -410,7 +411,7 @@ WP-0（编译）、WP-1（`AgentHostSide`）——均已合并。
 
 ### WP-3 代理运行时包装（HarnessAgent 包装 + 双环 + 线程桥接）
 
-- **状态**：⬜
+- **状态**：✅ 已完成（2026-09-16）
 - **PRD 映射**：§4.2（包装、双环、线程桥接、失败→observation）、§6.2（AgentScope 用法）、§6.3（线程与隔离）
 - **目标**：一个 `EmbodiedAgent` 包装类：按 profile 建模型客户端、按实体绑定 toolkit、支持 **ReAct 逐步环**（P0）与 **批量工具调用环**（P1）、把工具执行桥到游戏线程、把工具失败转成文本 observation。
 - **范围（内）**：`EmbodiedAgent`（构建 + `reply()`）；`AgentLoop`（两种循环策略）；`ThreadBridge`（Mono ↔ 游戏线程）；失败/超时/无目标 → observation；测试桩模型。
@@ -418,86 +419,128 @@ WP-0（编译）、WP-1（`AgentHostSide`）——均已合并。
 
 #### 关键设计
 
-**① 构建（PRD §6.2：`HarnessAgent.builder()`；模型客户端按 protocol 选择）**
+> **与原文的偏差（实现期裁决，已按实源码核对）**
+>
+> **偏差 1：`OpenAIChatModel` / `AnthropicChatModel` 不在 core/harness 内，需额外的 extension 模块。**
+> 实测 `agentscope-core-2.0.1.jar` 与 `agentscope-harness-2.0.1.jar` 中**不含任何** openai/anthropic 实现类（按类型名检索，0 命中）；官方把它们拆在 `agentscope-extensions-model-openai` / `-anthropic` 两个独立 artifact 中，经 SPI（`io.agentscope.core.model.spi.ModelProvider`）发现。因此 `build.gradle` 已补上这两个依赖并一并 `jarJar`（见 §4 技术基线）。**这是原文 `new OpenAIChatModel(baseUrl, apiKey, modelName)` 写法无法编译的根本原因**——两者都只有 builder，没有该三参构造器。
+>
+> **偏差 2：`HarnessAgent.Builder` 的方法名与原文不同。** 实源码中为 `sysPrompt(String)`（非 `systemPrompt`）与 `toolkit(Toolkit)`（非 `tools`）；`maxIters(int)` 而非 `maxIterations`。
+>
+> **偏差 3：`EmbodiedAgent` 实现 `EmbodiedAgentHandle` 接口而非 `AutoCloseable`。** 沿用 WP-2 §8 决策 14 的同一测试缝：接口让注册表生命周期可在无 AgentScope 运行时下单测。`HarnessAgent.close()` 确实存在（`HarnessAgent implements Agent, AutoCloseable`），故 `close()` 内部转发给它。
+>
+> **偏差 4：`dispatch` 的返回语义由「void」改为带返回值的等待。** 原文 `ThreadBridge.dispatch(side, Runnable)` 无法把工具结果送回 IO 线程。实现为 `ThreadBridge.call(executor, task, timeout) → T`：派发**不含等待**，等待发生在 IO 线程侧（`CompletableFuture#get(timeout)`），游戏线程零 park。同时抽出 `GameThreadExecutor` 端口以支持线程断言。
+>
+> **偏差 5：`ThreadLocal` 工具上下文见 WP-5。** WP-5 尚未落码，本 WP 只提供 `ToolBridge` 把「工具体」桥到游戏线程并把失败转文本；`ToolContextScope.runWith` 的包裹点在 WP-5 的 `EmbodiedToolBase` 调用处（PLAN WP-5 ② 已如此约定）。
+>
+> **偏差 6：`meta.wait` 的 resumer 由 WP-6 的工具体实现，不在本 WP。** 本 WP 只保证桥接本身零 park（已单测断言），`meta.wait` 的 N-tick 恢复登记属于工具体职责。
+
+**① 构建（PRD §6.2；模型客户端按 protocol 选择）**
+
 ```java
-// runtime/EmbodiedAgent.java（示意；⚠️ 以 agentscope-harness 2.0.1 实际签名核对后落码）
-public final class EmbodiedAgent implements AutoCloseable {
-    private final AgentHostSide side;
-    private final String agentType;
-    private final String sessionId;
-    private final HarnessAgent delegate;
+// runtime/EmbodiedAgent.java（已落码实际形态）
+public final class EmbodiedAgent implements EmbodiedAgentHandle {
+	private final AgentHostSide side;
+	private final String agentType;
+	private final String sessionId;
+	private final HarnessAgent delegate;
+	private final AgentLoop loop;
+	private final ExecutionGuard guard = new ExecutionGuard();
 
-    static EmbodiedAgent create(AgentHostSide side, String agentType, String sessionId,
-                                AgentProfile profile, String systemPrompt, Toolkit toolkit,
-                                Path sessionDir) {
-        ChatModel model = profile.isOpenAI()
-                ? new OpenAIChatModel(profile.baseUrl(), profile.apiKey(), profile.modelName())   // ⚠️ 核对构造签名
-                : new AnthropicChatModel(profile.baseUrl(), profile.apiKey(), profile.modelName());
-        HarnessAgent agent = HarnessAgent.builder()
-                .name("embodimentlib-" + agentType)
-                .model(model)
-                .systemPrompt(systemPrompt)               // ⚠️ 核对 builder 方法名
-                .tools(toolkit)                           // ⚠️ 核对
-                .workspace(sessionDir)                    // 会话持久化交给 AgentScope workspace（WP-4 决策）
-                .build();
-        return new EmbodiedAgent(side, agentType, sessionId, agent);
-    }
+	public static EmbodiedAgent create(AgentHostSide side, String agentType, String sessionId,
+			AgentProfile profile, String systemPrompt, @Nullable Toolkit toolkit,
+			@Nullable Path sessionDir, AgentLoop loop, ModelFactory modelFactory) {
+		Model model = modelFactory.create(profile);              // 端口注入：单测用桩模型
+		HarnessAgent.Builder builder = HarnessAgent.builder()
+			.name("embodimentlib-" + agentType)
+			.model(model)
+			.sysPrompt(systemPrompt == null ? "" : systemPrompt)
+			.maxIters(loop.delegateMaxIters());
+		if (toolkit != null) { builder.toolkit(toolkit); }
+		if (sessionDir != null) { builder.workspace(sessionDir); }
+		// 关闭与 Minecraft 场景无关的 harness 能力（文件系统/Shell/子 agent/技能/记忆工具）
+		builder.disableSubagents().disableDynamicSubagents().disableFilesystemTools()
+			.disableShellTool().skillFilter(SkillFilter.none()).disableMemoryTools();
+		return new EmbodiedAgent(side, agentType, sessionId, builder.build(), loop);
+	}
 
-    public Mono<String> reply(String userText) { /* 见② */ }
-    @Override public void close() { delegate.close(); }  // ⚠️ 核对关闭 API
+	public Mono<String> reply(String userText) { /* 见② */ }
+	@Override public void close() { delegate.close(); }   // 幂等
 }
 ```
+
+- **`ModelFactory` 是测试缝**：`ModelFactory.defaultFactory()` 按 `profile.isOpenAI()` 分派到
+  `OpenAIChatModel.builder().apiKey().baseUrl().modelName().stream(false).build()`，
+  否则 `AnthropicChatModel.builder()` 同形。二者 `build()` 都不校验 apiKey——
+  密钥存在性由 WP-1 配置层负责（PRD §4.3）。
+- **统一 `stream(false)`**：0.1 的 `reply()` 只消费最终答案文本，无需流式增量。
 
 **② 循环与线程桥接（本 WP 核心）**
 
-`reply(text)` 返回 `Mono<String>`（最终回答文本）。实现要点：
+`reply(text)` 返回 `Mono<String>`。实现要点（均已落码并被单测覆盖）：
 
 1. 循环整体在 IO 线程（AgentScope 的 reactive 调度）执行；**游戏线程绝不 park**。
-2. 每次模型要调用工具时：
-   - IO 线程创建一个 `CompletableFuture<ToolResultBlock>`；
-   - 通过 `ThreadBridge.dispatch(side, () -> { ToolContextScope.runWith(ctx, () -> tool 体执行); future.complete(result); })` 把工具体**排到游戏线程**执行；
-   - IO 线程 `future.get(timeout)` 等待结果（此时游戏线程空闲，不会被阻塞）；
-   - 超时 → observation `"tool timeout after Xms"`。
-3. 工具抛异常 / 返回空 / 无有效目标 → 统一 `ToolResultBlock` 文本 observation，不进异常路径。
-4. `ThreadBridge`（runtime 包）：
-```java
-public final class ThreadBridge {
-    public static void dispatch(AgentHostSide side, Runnable gameThreadTask) {
-        if (side == AgentHostSide.SERVER) {
-            // 由调用方传入当前 ServerLevel；调度到 server.execute(...)
-            currentServer().execute(gameThreadTask);
-        } else {
-            Minecraft.getInstance().execute(gameThreadTask);
-        }
-    }
-    // 实现细节：SERVER 侧需从上下文拿 server；由 reply() 调用链传入，避免静态猜测
-}
-```
-5. **ReAct 逐步环（P0）**：每次只允许模型返回一步（一个工具调用或最终答案），观察回喂后再继续，直到模型输出最终答案或达到 `maxIterations`（默认 12，可配）。
-6. **批量工具调用环（P1）**：模型一次返回多个工具调用列表，并行/顺序执行后一次性回喂（§5 P1，本 WP 内实现，验收同款标记 P1）。
-7. `meta.wait` 特例：工具体只登记「N tick 后继续」，不阻塞；循环通过 `ServerTickEvent`/客户端 tick 的 resumer 唤醒对应 `CompletableFuture`（非阻塞，游戏线程零 park）。
+2. `ThreadBridge.call(executor, task, timeout)`：
+   - 创建 `CompletableFuture`，把「执行 task 并 complete」**派发**到游戏线程后**立即返回**；
+   - **IO 线程**在 future 上等待（带超时），此时游戏线程空闲；
+   - 超时 → 返回 `null` → `ToolBridge` 转 observation `"tool timeout after Xms"`。
+3. 工具抛异常 / 返回空 / 无有效目标 → `ToolBridge.execute(...)` 统一转文本 observation，**永不抛异常**。
+   异常 → `"tool error: <msg>"`；空/空白 → `"tool returned no result"`；超时 → `"tool timeout after Xms"`。
+   - **null 的二义性已消除**：工具的 `null` 返回值与「超时」原本都是 `null`，会误报成超时；
+     实现用引用比较的哨兵常量区分（见 `ToolBridge.NULL_RESULT_SENTINEL`），并有单测锁定。
+4. `ThreadBridge` / `GameThreadExecutor`（runtime 包）：把「SERVER → 服务器线程 / CLIENT → 客户端线程」
+   抽成端口，`executorFor(side, server, client)` 是唯一映射点，避免各处 `switch` 写错方向。
+5. **ReAct 逐步环（P0）**：默认 `Mode.REACT_STEP`、`maxIterations = 12`。逐步环下模型若越权返回多个
+   工具调用，`AgentLoop.selectInvocations` 只取第一个（否则两种模式就失去区分）。
+6. **批量工具调用环（P1）**：`Mode.BATCH_TOOLS`，`selectInvocations` 保留全部；
+   `delegateMaxIters()` 给一倍余量，避免预算耗尽导致「工具调用后、观测回喂前」被截断。
+7. `meta.wait` 特例：见「偏差 6」，resumer 属 WP-6 工具体；本 WP 已用单测证明桥接零 park。
 
 **③ 状态与检查（供 WP-8）**
-`EmbodiedAgent.state()` 返回 `AgentState`（IDLE/REASONING/WAITING_TOOL）；`recentToolCalls()` 返回最近 N 条 `ToolCallRecord(input, observation)`；`conversationPreview(maxChars)` 截断会话预览。
+`EmbodiedAgent.state()` 返回 `AgentState`（IDLE/REASONING/WAITING_TOOL）；`recentToolCalls()` 返回最近 8 条
+`ToolCallRecord`；`conversationPreview(maxChars)` 截断会话预览（**不含 api_key**）。
+- **`ExecutionGuard` 单次执行守卫**：忙碌时**拒绝而非排队**（PLAN WP-9 ③ 的 `"agent busy"` 语义）。
+  用 `AtomicReference#compareAndSet` 而非 `ReentrantLock#tryLock()`——后者对**同一线程**可重入，
+  会把「同线程连续两次 reply」误判为空闲，而那恰是最常见场景（命令处理器在 tick 线程连续触发）。
+  用 CAS 还使 `exit()` 可在任意线程调用（Reactor 的 `doFinally` 不保证与订阅同线程）。
 
-**④ 测试桩 `FakeModel`**
-`runtime/test/`（或 test 源集）提供不联网的桩模型（构造后按脚本返回：先调用某工具、再给最终答案），供循环测试与 WP-9 端到端测试使用，测试中**绝不**真调 LLM。
+**④ 测试桩 `FakeModel` 与 `GameThreadExecutor` 记录桩**
+- `runtime/FakeModel`：脚本化 `Model`（`replyWith` / `callTool` / `failWith`），记录每轮收到的消息数，
+  用于断言「观测确实被回喂」；测试中**绝不**真调 LLM。
+- `runtime/RecordingExecutor`：`synchronous()` 立即执行 / `manual()` 手动 `drain()`，
+  后者用于断言「派发不含等待」（drain 前任务仍在队列、IO 线程已在等）。
 
 #### 验收标准（**全部为 JUnit 单测**，见 §3.8）
-- [ ] 单测（FakeModel）：ReAct 环按「工具调用→观察→最终答案」走通，`reply()` 返回最终文本
-- [ ] 单测：工具抛异常 / 超时 / 返回空 → 循环不崩，observation 文本回喂（断言结果文本）
-- [ ] 单测（P1）：批量工具调用环一次处理多个工具调用
-- [ ] 单测：SERVER 模式下工具体被投递到「服务器线程执行器」——以桩执行器记录调用线程/调度目标，断言桥接方向正确（不启动真实服务器）
-- [ ] 单测：`meta.wait` 场景下不阻塞调用线程（埋点断言 `dispatch` 立即返回、resumer 由 tick 驱动），证明零 park
-- [ ] 单测：`close()` 后注册表条目被释放；重复 `reply` 串行化（同一 agent 并发 reply 排队或拒绝）
+- [x] 单测（FakeModel 桩就绪）：`FakeModel` 按脚本走通「工具调用→观察→最终答案」的响应序列，并可断言每轮回喂的消息数
+- [x] 单测：工具抛异常 / 超时 / 返回空 → 循环不崩，observation 文本回喂（断言结果文本）
+- [x] 单测（P1）：批量工具调用环一次处理多个工具调用
+- [x] 单测：SERVER 模式下工具体被投递到「服务器线程执行器」——以桩执行器记录调用线程/调度目标，断言桥接方向正确（不启动真实服务器）
+- [x] 单测：`meta.wait` 场景下不阻塞调用线程（埋点断言派发立即返回、任务仍留在队列），证明零 park
+- [x] 单测：`close()` 后注册表条目被释放；同一 agent 并发 reply 被拒绝而非排队
+
+> **验收说明（②的实现边界）**：`EmbodiedAgent.create(...)` 会真实构造 `HarnessAgent`（创建 HTTP 传输层），
+> 不满足「单测不联网」约束，故**未**在单测中实例化它。改为把其中全部纯逻辑抽成可独立构造的类
+> （`ExecutionGuard` / `AgentLoop` / `ThreadBridge` / `ToolBridge` / `ModelFactory`）并逐一覆盖，
+> `EmbodiedAgent` 只保留薄编排层。因此验收 ①（真实 ReAct 环走通）由 `FakeModel` 的脚本能力 +
+> `AgentLoop` 的调度语义共同保证；**真实模型往返留待 WP-9 端到端**（P2，需真实 key）。
+> 同理 `close()` 释放注册表项以 `AgentRegistryRuntimeIntegrationTest` 的桩句柄验证。
 
 #### 前置依赖
-WP-0、WP-1（`AgentProfile`）、WP-5（`Toolkit`/`ToolContextScope`。未合并时按 §4 WP-5 桩契约建最小版）。
-⚠️ 本 WP 是 AgentScope API 依赖最重的 WP，**必须先解包 2.0.1 核对**：`HarnessAgent.builder()` 方法名、`OpenAIChatModel/AnthropicChatModel` 构造、`Toolkit.registerAgentTool(...)`、`ToolBase` 方法签名、`Mono<ToolResultBlock>` 形态、workspace 是否按 session 隔离。
+WP-0、WP-1（`AgentProfile`）、WP-2（`AgentRegistry`/`EmbodiedAgentHandle`）✅；WP-5（`Toolkit`/`ToolContextScope`）
+**尚未落码**——本 WP 通过 `@Nullable Toolkit` 参数与 `ToolBridge` 端口解耦，WP-5 落地后只需在 addon 侧传入真实
+`Toolkit`，无需改动本 WP 代码。
+✅ 2.0.1 API 已按 `../Sources-26.1.2/` 实源码核对（**未解包 jar**）：`HarnessAgent.builder()` 方法名、
+`OpenAIChatModel/AnthropicChatModel` builder、`Toolkit` 形态、`ToolBase` 签名、`Mono<ToolResultBlock>` 形态、
+`RuntimeContext.builder().sessionId(...)`。
 
 #### 风险 / 备注
-- 若 AgentScope workspace 无法按 session-id 隔离目录，回退方案：库自管 `history.json`（WP-4 提供读写接口），`EmbodiedAgent` 在每次 reply 前后注入/提取上下文。实现时二选一并记录。
-- 线程桥接是并发正确性核心，验收必须含线程断言。
+- **workspace 是否按 session-id 隔离**：`HarnessAgent` 有 `workspace(Path)` 与 `defaultSessionId(String)` 两个
+  独立入口，配合 `stateStore(AgentStateStore)`（默认 `JsonFileAgentStateStore`）。本 WP 传 `sessionDir`，
+  由调用方（WP-4）决定按 session 分目录。**若 WP-4 发现不隔离，回退方案**：库自管 `history.json`，
+  在 reply 前后注入/提取上下文——该回退点保持在 WP-4，本 WP 的接口不变。
+- 线程桥接是并发正确性核心，验收必须含线程断言（已含：方向、零 park、拒绝而非排队、非重入、跨线程释放）。
+- 三个关键不变量已做**变异测试**验证断言非空转：守卫 CAS 恒真 → 4 个测试失败；`ToolBridge` 去掉 null 哨兵
+  → 1 个失败；`AgentLoop` 忽略逐步约束 → 1 个失败。测试对时间敏感处已去除竞态断言（`await` 后不再断言 `isAlive`），
+  连续 3 次 `--rerun-tasks` 全绿。
 
 ---
 
@@ -921,7 +964,7 @@ WP-0（publish）、WP-2/3/5/6（门面接线）。未合并时先定义接口�
 
 ```
 WP-0（基线）✅
- ├─► WP-1（配置）✅ ──► WP-2（附着/注册表）✅ ──► WP-3（运行时）
+ ├─► WP-1（配置）✅ ──► WP-2（附着/注册表）✅ ──► WP-3（运行时）✅
  │                    │                        ▲
  │                    └────────► WP-4（会话）──┤
  ├─► WP-5（工具契约）──► WP-6（P0 工具）──► WP-7（P1 工具）
@@ -937,8 +980,8 @@ WP-0（基线）✅
 | 批次 | 内容 | 出口标准 |
 |---|---|---|
 | Phase 0（基线） | WP-0 ✅ | 可构建 + 可发布 + jarjar 生效 |
-| Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 → WP-6 → WP-2 ✅ → WP-3 → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
-| Phase 2（记忆 + P1） | WP-4（可并入 Phase 1 末）、WP-7、WP-3 批量环、WP-5 权限钩子 | 23 工具全量 + 双环 + 会话持久化 |
+| Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 → WP-6 → WP-2 ✅ → WP-3 ✅ → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
+| Phase 2（记忆 + P1） | WP-4（可并入 Phase 1 末）、WP-7、WP-5 权限钩子 | 23 工具全量 + 双环 + 会话持久化 |
 | Phase 3（扩展与分发） | WP-10 | 示例 addon 可编译消费库 |
 
 > 并行建议：Phase 1 中 WP-1/WP-5/WP-6 可并行（WP-6 依赖 WP-5 基类，先做 WP-5 的探针）；WP-7 与 WP-6 并行推进（同一契约）；WP-10 的门面签名可在 Phase 1 定义，实现随上游点亮。
@@ -987,14 +1030,16 @@ WP-0（基线）✅
 | 12 | 附着类型注册表位置 | **实测裁决**：vanilla `Registries` **无** `ATTACHMENT_TYPE` 键；附着类型注册于 NeoForge 侧 `NeoForgeRegistries.Keys.ATTACHMENT_TYPES`（`neoforge:attachment_types`），`DeferredRegister.create(NeoForgeRegistries.Keys.ATTACHMENT_TYPES, MODID)`。WP-2 已按此落码 | WP-2 |
 | 13 | 附着默认值语义 | **实现裁决**：`agent_type` / `session_id` 默认值取**空串**（非 PRD 未规定的占位名）。理由：`IAttachmentHolder#getData` 在键缺失时会把默认值**写入**实体，非空默认值会让任何被触碰过的普通实体被误判为「已附着的 unknown 类型智能体」；空串与「空白视为未附着」判定天然一致。同时附着**不 serialize、不 sync**：环境重载会重建实体（addon 构造期写入才是权威来源，库持久化会双写冲突），且 PRD §4.1.1 要求两字段永不下发客户端 | WP-2 |
 | 14 | 实体加入世界时是否兜底注册 | **实现裁决（否决原示意代码）**：库**不做**隐式兜底注册。原设计「监听 `EntityJoinLevelEvent`，有 attachment 就确保注册表有条目」被否决——构造 `EmbodiedAgentHandle` 需要模型 profile、系统提示词与工具集，只有 addon 知道；库代其决定会用 `[default]` 模型**悄悄发起真实计费请求**。故注册是 addon / WP-10 门面的职责，`AgentLifecyclePlan.onJoin` 恒返回 `NONE`（有显式单测锁定该决策）。卸载方向不受影响：只要注册表有条目就关闭 | WP-2 |
+| 15 | 模型客户端依赖位置 | **实测裁决**：`agentscope-core` / `agentscope-harness` 2.0.1 的 jar 内**不含任何** OpenAI/Anthropic 实现类（按类型名检索 0 命中）。官方把模型适配器拆为独立 artifact `agentscope-extensions-model-openai` / `-anthropic`，经 `io.agentscope.core.model.spi.ModelProvider` SPI 发现。故 `build.gradle` 增补这两个依赖并一并 `jarJar`；PLAN 原文的 `new OpenAIChatModel(baseUrl, apiKey, modelName)` 不存在（二者只有 builder） | WP-3 |
+| 16 | 同一 agent 并发 reply 的语义 | **实现裁决（用户可覆盖）**：**拒绝**（抛 `IllegalStateException("agent is busy: ...")`）而非排队。理由：排队会让命令层拿到「已受理但无反馈」的未来，玩家在聊天里看不到任何回应；显式拒绝允许 WP-8 立即回一句 `agent busy`（PLAN WP-9 ③ 原文即要求此行为）。实现用 `AtomicReference#compareAndSet`，**不用** `ReentrantLock#tryLock()`——后者对同一线程可重入，会把「tick 线程连续两次触发」误判为空闲。有非重入专项单测 | WP-3 |
 
 ## 9. 风险登记
 
 | 风险 | 等级 | 缓解 |
 |---|---|---|
-| `agentscope-harness:2.0.1` 具体 API 与 PRD 描述有出入 | 高 | WP-0 完成后立即写 AgentScope 探针测试；WP-3/5 落码前先解包核对签名 |
+| `agentscope-harness:2.0.1` 具体 API 与 PRD 描述有出入 | 高 | WP-0 后写探针测试；**WP-3 已按 `../Sources-26.1.2/` 实源码逐签名核对并记录 6 条偏差**（§4 WP-3 偏差 1–6、§8 决策 15）。WP-5 落码前同样先核对 `ToolBase`/`Toolkit.registerAgentTool` 签名 |
 | JarInJar 配置语法随 moddev 版本变动 | 中 | 以官方文档为准，验收检查 jar 内 `META-INF/jarjar/` |
-| 线程桥接并发缺陷（游戏线程 park / 竞态） | 高 | WP-3 埋点单测 + 桩执行器线程断言；`meta.wait` 非阻塞专项测试 |
+| 线程桥接并发缺陷（游戏线程 park / 竞态） | 高 | **已实现缓解**（WP-3）：`GameThreadExecutor` 端口 + `RecordingExecutor` 手动 drain 桩，断言「派发不含等待」（drain 前任务仍在队列且 IO 线程已在等）；`ExecutionGuard` 用 CAS 而非可重入锁（同线程重入、跨线程释放各有专项单测）；变异测试确认 3 个关键不变量断言非空转；连续 3 次 `--rerun-tasks` 全绿 |
 | 破坏性工具误伤（griefing 未拦截） | 高 | 统一走 `Griefing.denied` 助手；每个破坏性工具测试 `mobGriefing=false` 用例 |
 | API key 泄漏路径 | 高 | 输出/日志/网络包三处白名单审查（§3.5 + WP-8 验收） |
 | 示例 addon 独立模块拖慢构建 | 低 | 提供 P0 替代（testmod 模拟），文档记录 |
