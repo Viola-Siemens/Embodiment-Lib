@@ -1,6 +1,7 @@
 package com.hexagram2021.embodimentlib.runtime;
 
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
+import org.jetbrains.annotations.Contract;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,7 +44,34 @@ public final class ThreadBridge {
 	/** 工具执行抛异常时的 observation 前缀（PRD §4.2：失败转文本，禁止抛异常）。 */
 	public static final String ERROR_OBSERVATION_PREFIX = "tool error: ";
 
+	/**
+	 * 测试钩子：在 {@link #call} 完成派发、即将进入等待的那一刻触发。
+	 * <p>
+	 * 存在的理由是消除测试竞态。断言「drain 之前 IO 线程仍在等待」需要一个确定的前提：
+	 * 派发已完成<b>且</b>尚未开始等待。仅靠「观察到提交」无法排除「游戏线程已经 drain 完」，
+	 * 于是断言会随线程调度随机失败（CI 上少核机器尤其容易命中）。
+	 * <p>
+	 * 生产环境该 ThreadLocal 始终为 null，只多一次 {@code get()}，无实际开销。
+	 */
+	private static final ThreadLocal<Runnable> WAITING_HOOK = ThreadLocal.withInitial(() -> () -> {
+	});
+
 	private ThreadBridge() {
+	}
+
+	/**
+	 * 仅供测试：安装「即将进入等待」钩子。
+	 *
+	 * @param hook 钩子；{@code null} 表示恢复为默认空实现
+	 */
+	static void setWaitingHook(@Nullable Runnable hook) {
+		WAITING_HOOK.set(hook == null ? () -> {
+		} : hook);
+	}
+
+	/** 仅供测试：清除等待钩子，避免污染同线程的后续用例。 */
+	static void clearWaitingHook() {
+		WAITING_HOOK.remove();
 	}
 
 	/**
@@ -62,7 +90,7 @@ public final class ThreadBridge {
 		Objects.requireNonNull(task, "task");
 		Objects.requireNonNull(timeout, "timeout");
 
-		CompletableFuture<T> future = new CompletableFuture<>();
+		CompletableFuture<@Nullable T> future = new CompletableFuture<>();
 		// 派发阶段绝不等待：这里只登记任务，随后立即落到下面的 future.get(...)。
 		executor.execute(() -> {
 			try {
@@ -72,6 +100,10 @@ public final class ThreadBridge {
 				future.completeExceptionally(ex);
 			}
 		});
+
+		// 测试钩子：在真正进入等待前发信号，让单测能建立「派发已完成且即将等待」的确定前提，
+		// 而不是靠 sleep 赌线程调度（生产环境该 ThreadLocal 为空，零开销）。
+		WAITING_HOOK.get().run();
 
 		try {
 			// 等待发生在 IO 线程，游戏线程不受影响（本 WP 的零 park 核心）。
@@ -143,8 +175,10 @@ public final class ThreadBridge {
 	 * @param clientExecutor 客户端线程执行器
 	 * @return 该侧对应的执行器
 	 */
+	@Contract("_, null, null -> fail")
 	public static GameThreadExecutor executorFor(AgentHostSide side,
-			GameThreadExecutor serverExecutor, GameThreadExecutor clientExecutor) {
+												 @Nullable GameThreadExecutor serverExecutor,
+												 @Nullable GameThreadExecutor clientExecutor) {
 		return switch (Objects.requireNonNull(side, "side")) {
 			case SERVER -> Objects.requireNonNull(serverExecutor, "serverExecutor");
 			case CLIENT -> Objects.requireNonNull(clientExecutor, "clientExecutor");

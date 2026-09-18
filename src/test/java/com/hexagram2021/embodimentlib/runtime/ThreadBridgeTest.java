@@ -1,6 +1,7 @@
 package com.hexagram2021.embodimentlib.runtime;
 
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -34,21 +35,27 @@ class ThreadBridgeTest {
 		RecordingExecutor executor = RecordingExecutor.manual();
 		AtomicBoolean taskRan = new AtomicBoolean();
 		CountDownLatch callerEntered = new CountDownLatch(1);
-		AtomicReference<String> outcome = new AtomicReference<>("unset");
+		CountDownLatch aboutToWait = new CountDownLatch(1);
+		AtomicReference<@Nullable String> outcome = new AtomicReference<>("unset");
 
 		Thread io = new Thread(() -> {
 			callerEntered.countDown();
-			// 超时设得足够短，使「派发本身是否阻塞」与「任务是否执行」可被区分观察。
-			outcome.set(ThreadBridge.call(executor, () -> {
-				taskRan.set(true);
-				return "done";
-			}, Duration.ofMillis(300)));
+			ThreadBridge.setWaitingHook(aboutToWait::countDown);
+			try {
+				// 超时设得足够短，使「派发本身是否阻塞」与「任务是否执行」可被区分观察。
+				outcome.set(ThreadBridge.call(executor, () -> {
+					taskRan.set(true);
+					return "done";
+				}, Duration.ofMillis(300)));
+			} finally {
+				ThreadBridge.clearWaitingHook();
+			}
 		}, "fake-io-thread");
 		io.start();
 
 		assertTrue(callerEntered.await(2, TimeUnit.SECONDS), "调用线程应已启动");
-		// 关键断言：提交发生了（说明派发已走到执行器），但任务没跑 —— 说明派发阶段不含等待。
-		assertTrue(executor.awaitSubmit(2000), "应已向游戏线程执行器提交任务");
+		// 关键断言：派发已完成（即将进入等待），但任务没跑 —— 说明派发阶段不含等待。
+		assertTrue(aboutToWait.await(2, TimeUnit.SECONDS), "IO 线程应已完成派发并进入等待");
 		assertFalse(taskRan.get(), "游戏线程未 drain 前，任务不应被执行");
 		assertEquals(1, executor.pendingCount(), "任务应停留在游戏线程队列中");
 
@@ -63,16 +70,25 @@ class ThreadBridgeTest {
 	@DisplayName("drain 后任务在游戏线程执行并唤醒等待中的 IO 线程")
 	void drainCompletesTheWaitingCaller() throws Exception {
 		RecordingExecutor executor = RecordingExecutor.manual();
-		AtomicReference<String> outcome = new AtomicReference<>("unset");
+		AtomicReference<@Nullable String> outcome = new AtomicReference<>("unset");
 		CountDownLatch returned = new CountDownLatch(1);
+		// 该闭锁由 ThreadBridge 在「即将进入 future.get」前触发，使下面的断言有确定前提。
+		CountDownLatch aboutToWait = new CountDownLatch(1);
 
 		Thread io = new Thread(() -> {
-			outcome.set(ThreadBridge.call(executor, () -> "from game thread", Duration.ofSeconds(5)));
+			ThreadBridge.setWaitingHook(aboutToWait::countDown);
+			try {
+				outcome.set(ThreadBridge.call(executor, () -> "from game thread", Duration.ofSeconds(5)));
+			} finally {
+				ThreadBridge.clearWaitingHook();
+			}
 			returned.countDown();
 		}, "fake-io-thread");
 		io.start();
 
-		assertTrue(executor.awaitSubmit(2000), "应已提交任务");
+		// 等到「派发已完成且即将等待」——此时任务必定还在队列里，且 IO 线程尚未拿到结果。
+		assertTrue(aboutToWait.await(2, TimeUnit.SECONDS), "IO 线程应已完成派发并进入等待");
+		assertEquals(1, executor.pendingCount(), "drain 之前任务应仍在游戏线程队列中");
 		assertEquals(1, returned.getCount(), "drain 之前 IO 线程应仍在等待结果");
 		assertEquals(1, executor.drain(), "游戏线程应执行 1 个任务");
 
@@ -145,7 +161,7 @@ class ThreadBridgeTest {
 	@DisplayName("派发在调用线程完成；任务在执行器线程运行")
 	void taskRunsOnExecutorThread() {
 		RecordingExecutor executor = RecordingExecutor.synchronous();
-		AtomicReference<String> taskThread = new AtomicReference<>();
+		AtomicReference<@Nullable String> taskThread = new AtomicReference<>();
 
 		ThreadBridge.call(executor, () -> {
 			taskThread.set(Thread.currentThread().getName());
