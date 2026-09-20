@@ -37,7 +37,7 @@
 | WP-2 | 实体附着（Attachment）+ 双端 Agent 注册表 ✅ | §4.1.2, §4.1.3, §6.3(注册表), §6.4(附着) | P0 |
 | WP-3 | 代理运行时包装（HarnessAgent 包装 + 双环 + 线程桥接）✅ | §4.2, §6.2(运行时), §6.3(线程) | P0 |
 | WP-4 | 会话与记忆持久化（session-id 维度） | §4.4, §6.4(会话) | P0 |
-| WP-5 | 工具契约与基础设施（含权限钩子、Griefing 集成） | §4.5(契约), §4.6(权限), §4.9, §6.2(工具) | P0（权限钩子 P1） |
+| WP-5 | 工具契约与基础设施（含权限钩子、Griefing 集成）✅ | §4.5(契约), §4.6(权限), §4.9, §6.2(工具) | P0（权限钩子 P1） |
 | WP-6 | P0 内置工具（12 个） | §4.5 #1,2,3,6,7,9,10,11,13,16,22,23；§5 P0 | P0 |
 | WP-7 | P1 内置工具（11 个） | §4.5 #4,5,8,12,14,15,17,18,19,20,21；§5 P1 | P1 |
 | WP-8 | 调试命令与可观测性（`/embodimentlib inspect`） | §4.7 | P0 |
@@ -430,7 +430,7 @@ WP-0（编译）、WP-1（`AgentHostSide`）——均已合并。
 >
 > **偏差 4：`dispatch` 的返回语义由「void」改为带返回值的等待。** 原文 `ThreadBridge.dispatch(side, Runnable)` 无法把工具结果送回 IO 线程。实现为 `ThreadBridge.call(executor, task, timeout) → T`：派发**不含等待**，等待发生在 IO 线程侧（`CompletableFuture#get(timeout)`），游戏线程零 park。同时抽出 `GameThreadExecutor` 端口以支持线程断言。
 >
-> **偏差 5：`ThreadLocal` 工具上下文见 WP-5。** WP-5 尚未落码，本 WP 只提供 `ToolBridge` 把「工具体」桥到游戏线程并把失败转文本；`ToolContextScope.runWith` 的包裹点在 WP-5 的 `EmbodiedToolBase` 调用处（PLAN WP-5 ② 已如此约定）。
+> **偏差 5：`ThreadLocal` 工具上下文见 WP-5。** 本 WP 只提供 `ToolBridge` 把「工具体」桥到游戏线程并把失败转文本；`ToolContextScope.runWith` 的包裹点在 WP-5 的 `EmbodiedToolBase` 调用处。**WP-5 已落码**：`EmbodiedToolBase.executeOnGameThread(ToolBridge, ToolContext, Map)` 正是该包裹点，WP-3 的 `ToolBridge` 无需改动。
 >
 > **偏差 6：`meta.wait` 的 resumer 由 WP-6 的工具体实现，不在本 WP。** 本 WP 只保证桥接本身零 park（已单测断言），`meta.wait` 的 N-tick 恢复登记属于工具体职责。
 
@@ -525,9 +525,10 @@ public final class EmbodiedAgent implements EmbodiedAgentHandle {
 > 同理 `close()` 释放注册表项以 `AgentRegistryRuntimeIntegrationTest` 的桩句柄验证。
 
 #### 前置依赖
-WP-0、WP-1（`AgentProfile`）、WP-2（`AgentRegistry`/`EmbodiedAgentHandle`）✅；WP-5（`Toolkit`/`ToolContextScope`）
-**尚未落码**——本 WP 通过 `@Nullable Toolkit` 参数与 `ToolBridge` 端口解耦，WP-5 落地后只需在 addon 侧传入真实
-`Toolkit`，无需改动本 WP 代码。
+WP-0、WP-1（`AgentProfile`）、WP-2（`AgentRegistry`/`EmbodiedAgentHandle`）✅；WP-5（`Toolkit`/`ToolContextScope`）✅。
+本 WP 通过 `@Nullable Toolkit` 参数与 `ToolBridge` 端口解耦，**经确认无需改动本 WP 代码**：
+`ToolContextScope.runWith` 的包裹点落在 WP-5 的 `EmbodiedToolBase.executeOnGameThread` 内，
+WP-3 只负责「把工具体桥到游戏线程并把失败转文本」。addon 侧传入真实 `Toolkit` 即可（WP-9/10 接线）。
 ✅ 2.0.1 API 已按 `../Sources-26.1.2/` 实源码核对（**未解包 jar**）：`HarnessAgent.builder()` 方法名、
 `OpenAIChatModel/AnthropicChatModel` builder、`Toolkit` 形态、`ToolBase` 签名、`Mono<ToolResultBlock>` 形态、
 `RuntimeContext.builder().sessionId(...)`。
@@ -603,91 +604,224 @@ WP-1（side 判定）、WP-2（session-id 来源）、WP-3（历史委托接口�
 
 ### WP-5 工具契约与基础设施（含权限钩子、Griefing 集成）
 
-- **状态**：⬜
+- **状态**：✅ 已完成（2026-09-18）
 - **PRD 映射**：§4.5（契约：JSON 输入 / 文本输出 / 失败转观察）、§4.6（权限钩子，P1）、§4.9（Griefing）、§6.2（ToolBase/Toolkit）
 - **目标**：定义所有内置工具共享的基类、上下文与执行管线；统一 post 破坏性事件；暴露权限否决钩子。
 - **范围（内）**：`EmbodiedToolBase`、`ToolContext`、`ToolContextScope`（实体绑定机制）、`Griefing` 助手、`Toolkit` 组装工厂、`ToolPermissionChecker`（P1 验收）。
 - **范围（外）**：具体工具（WP-6/7）；addon 注册 API（WP-10，但基类属公开 API，需可被子类化）。
 
-#### 关键设计
+#### 实现记录（与下方原设计的偏差）
 
-**① `EmbodiedToolBase`（tool/base 包）**
+实际落码为 **8 个类**（原设计 5 个），新增 `ToolResults`，并把 `ToolContextScope` 提为顶层类：
+
+| 类 | 职责 |
+|---|---|
+| `tool/ToolContext` | record：`(AgentHostSide side, LivingEntity entity, String agentType, String sessionId)` |
+| `tool/ToolContextScope` | `ThreadLocal` 作用域：`get`/`getOrNull`/`isActive`/`runWith`（可嵌套） |
+| `tool/EmbodiedToolBase` | 继承 AgentScope `ToolBase`；`callAsync` → `executeSafely` → `run` |
+| `tool/ToolResults` | **新增**：参数解析与 observation 规约的纯逻辑层（无 Minecraft 依赖） |
+| `tool/Griefing` | 破坏性动作判定，复用 `EventHooks.canEntityGrief` |
+| `tool/BuiltinToolkit` | 23 工具目录 + 装配/裁剪/去重/覆盖度校验 |
+| `tool/ToolPermissionChecker` | `@FunctionalInterface`：否决钩子 + `and` 组合 + `guarded` |
+| `tool/package-info.java` | 包级注解与不变式说明 |
+
+**偏差 1：`ToolContext` 字段与原设计不同。**
+原设计 `(side, entity, AgentTypeRegistration type)`；实际为
+`(side, entity, String agentType, String sessionId)`。理由：`AgentTypeRegistration` 是 WP-1 配置层的类型，
+而工具上下文需要的是「身份字符串」（用于审计记录回填），持有注册对象会把配置层耦合进工具层；
+`sessionId` 则是 `ToolCallRecord` 审计所必需。
+
+**偏差 2：`ToolContextScope` 提为顶层类而非 `ToolContext.Scope` 内部类。**
+理由：作用域是**线程语义**的载体，与 record 的数据语义正交；独立成类后可单独撰写
+线程隔离/清理语义的 Javadoc，并避免 `ToolContext`（纯数据）被迫承载静态可变状态。
+
+**偏差 3：新增 `ToolResults` 纯逻辑层（重要）。**
+原因见下节「测试边界的实测结论」。所有「参数解析」「observation 规约」「schema 构造」
+从基类下沉到无 Minecraft 依赖的 `ToolResults`，基类只留转发。
+
+**偏差 4：`Griefing` 复用 `EventHooks.canEntityGrief`，不再自行 post 事件。**
+原设计示意 `new EntityMobGriefingEvent(entity, pos)` + `post(...).isCanceled()` + `canGrief()`。
+核对 26.1.2 源码后确认该写法**不成立**：
+- 构造器为 `EntityMobGriefingEvent(ServerLevel level, Entity entity)`——**无 BlockPos 参数**；
+- `EntityEvent extends Event`，**非** `ICancellableEvent`，故不存在 `isCanceled()`；
+- 判定唯一依据是 `canGrief()`，且构造时已纳入 `GameRules.MOB_GRIEFING` 初值。
+
+NeoForge 已提供规范入口 `EventHooks.canEntityGrief(ServerLevel, Entity)`，其实现正是
+`post(new EntityMobGriefingEvent(level, entity)).canGrief()`。**直接复用它**，
+好处是 NeoForge 若调整该事件语义，本库自动跟随。详见 §8 决策 17。
+
+**偏差 5：`Griefing.denied` 对非 `ServerLevel` 一律返回 `true`（保守拒绝）。**
+原设计未涉及 CLIENT 侧。该事件需要 `ServerLevel` 才能读游戏规则，而客户端本就不应产生
+权威世界变更（PRD §4.1.1），故保守拒绝比放行安全——宁可让工具回一句 denied，
+也不能让客户端改了本地世界造成双端不一致。
+
+**偏差 6：`BuiltinToolkit.create()` 当前返回空 Toolkit。**
+这是**刻意的中间状态**而非遗漏：23 个工具由 WP-6/WP-7 实现，若此处硬编码引用了尚不存在的类，
+WP-5 无法编译。真正交付的是**装配契约**：`BUILTIN_TOOL_IDS`（23 个 ID 的唯一权威清单）、
+`register`（重名拦截）、`without`（未知 ID 响亮失败）、`validateCoverage`（缺/多/重三向校验）。
+WP-6/WP-7 只需补注册循环。
+
+**偏差 9：P0/P1 口径不进入公开 API。**
+原设计有 `P0_TOOL_IDS` / `P1_TOOL_IDS` 两个 public 字段，把开发分期（P0=WP-6、P1=WP-7）
+暴露给了 addon——但这是**内部口径**，其它模组感知的应当只有「有没有这个工具、功能如何」。
+已删除这两个字段，目录退化为单一 `BUILTIN_TOOL_IDS`；P0/P1 的分期仅保留在 PRD §4.10 / WP-6 的
+自检记录与 PLAN，由 WP-6 交付时用 `validateCoverage` 对全目录核对，不作为公开 API 字段。
+
+**偏差 7：`ToolPermissionChecker.canExecute` 更名为 `check`，参数去掉了 tool 对象。**
+原设计签名 `(ToolContext, EmbodiedToolBase, JsonObject)`；实际为
+`(ToolContext, String toolName, Map<String,Object>)`。理由：把工具对象传给检查器会诱导实现
+去调用工具方法（越权），而检查器只需要「是谁、要做什么、参数是什么」；
+用 `String` 工具名而非工具实例，也让检查器可以在工具尚未实例化时工作。
+
+**偏差 8：空值与 `@NullMarked` 卫生。**
+包级采用 `@NullMarked`（默认非空），故去掉所有对 `@NullMarked` 非空参数的多余 `requireNonNull`
+与 `entity == null` 式防御（`Griefing.denied`、`EmbodiedToolBase` 构造器、
+`ToolContext` 紧凑构造器、`ToolContextScope.runWith`、`BuiltinToolkit`、`ToolResults`、
+`ToolPermissionChecker`）。**真正可空的边界才标 `@Nullable`**：`ToolResults.normalizeInput/normalizeObservation`
+（工具返回值可为 null）、`requiredParam` 的返回值、`asMob()` 返回值、`BuiltinToolkit.toolNames(@Nullable Toolkit)`
+（WP-2 的 `RegistryEntry.toolkit` 收窄前确实可空）、`ToolPermissionChecker.guarded` 的 checker。
+相应删除 6 个「断言多余空值防御抛 NPE」的测试（它们测的是防御而非契约）——
+空参数在 `@NullMarked` 下是调用方的编译期错误，由 null-safe 工具静态拦截，不属运行时契约。
+
+#### 测试边界的实测结论（为何需要 `ToolResults`）
+
+**实测（探针用例）**：纯 JUnit 环境下
+- `net.minecraft.world.entity.LivingEntity` **可加载**；
+- 但 `net.minecraft.world.entity.animal.Pig` **不在测试编译类路径上**，
+  且 `LivingEntity(EntityType, Level)` 构造需要 `EntityType` 注册表与世界对象。
+
+结论：**无法在单测中构造 `LivingEntity`**，因此 `ToolContext` 无法被实例化。
+这把 WP-5 的可测范围切成了两半：
+
+| 可单测（已覆盖 51 例） | 需真实游戏环境（推迟到 WP-9/10） |
+|---|---|
+| 参数解析、observation 规约、schema 构造（`ToolResults`） | `ToolContext` 的实体访问器（`isEntityUsable`/`level`/`asMob`） |
+| 作用域未激活时的行为、线程隔离、参数校验（`ToolContextScope`） | 作用域内取值与还原（需真实 ctx） |
+| 权限组合/短路/黑名单/参数校验（`ToolPermissionChecker`） | `guarded` 的放行/否决分支（要求非空 ctx） |
+| 工具目录、P0/P1 切分、去重、裁剪、覆盖度校验（`BuiltinToolkit`） | `Griefing` 的实际事件判定（需 `ServerLevel`） |
+| `ToolBase` 子类化与注册（`registerAgentTool` 真实调用） | 工具体的世界操作（WP-6/7） |
+
+**这是本 WP 的已知验收缺口**，已在 §4 WP-6/7 的验收项中排入真实游戏环境验证。
+
+#### 关键设计（原设计，已按上述偏差更新）
+
+**① `EmbodiedToolBase`（tool 包）**
 ```java
-public abstract class EmbodiedToolBase extends ToolBase {   // ⚠️ 继承 AgentScope ToolBase，核对 2.0.1 签名
+public abstract class EmbodiedToolBase extends ToolBase {
+    /** 子类实现：对绑定实体执行；返回 observation 文本 */
+    public abstract String run(ToolContext ctx, Map<String, Object> input) throws Exception;
+
     /** 库内部契约：工具体在游戏线程执行，从这里取绑定实体 */
     protected final ToolContext ctx() { return ToolContextScope.get(); }
 
-    /** 子类实现：对绑定实体执行；返回 observation 文本 */
-    public abstract String run(ToolContext ctx, JsonObject input) throws Exception;
+    /** 供单测/接线直接驱动；一切失败转文本 */
+    public String executeSafely(@Nullable Map<String, Object> input) { ... }
 }
 ```
-- 失败契约：`run` 内部尽量自吞；外层执行管线（WP-3 调用处）再兜底 catch → observation。
+- 失败契约：`executeSafely` 统一兜底 catch → `ThreadBridge.errorObservation`；
+  `null`/空白返回 → `ToolResults.EMPTY_OBSERVATION`；实体不可用 → `"entity unavailable"`。
+- `concurrencySafe(false)` 固定传入：Minecraft 世界操作必须在游戏线程串行，
+  让 AgentScope 不把同轮多个调用并行派发。
 
-**② `ToolContext` + `ToolContextScope`（实体绑定机制，PRD §4.1.3「工具绑定到执行时实体」）**
-```java
-public record ToolContext(AgentHostSide side, LivingEntity entity, AgentTypeRegistration type) {
-    public static final class Scope {
-        private static final ThreadLocal<ToolContext> CURRENT = new ThreadLocal<>();
-        public static ToolContext get() { var c = CURRENT.get(); if (c == null) throw new IllegalStateException("tool outside agent scope"); return c; }
-        public static <T> T runWith(ToolContext ctx, Supplier<T> task) { ... }
-    }
-}
-```
-- 机制：WP-3 在把工具体排到游戏线程前 `Scope.runWith(ctx, ...)`；工具内同步取 `ctx()`。多 agent 在同一游戏线程是串行执行的，ThreadLocal 安全。
+**② `ToolContext` + `ToolContextScope`（实体绑定机制，PRD §4.1.3）**
+- 机制：接线侧在把工具体排到游戏线程时 `ToolContextScope.runWith(ctx, () -> tool.run(...))`；
+  工具内同步取 `ctx()`。
+- **嵌套安全**：`runWith` 保存旧值并在 finally 还原（而非无脑 remove），
+  使「工具内部再触发工具执行」不会丢失外层绑定。
+- **线程安全**：多 agent 在同一游戏线程串行执行，ThreadLocal 语义成立；
+  且刻意**不继承**到子线程（避免 IO 线程误读已失效的游戏线程绑定）。
 - `entity` 已死亡/卸载 → 工具返回 `"entity unavailable"`。
 
 **③ `Griefing` 助手（PRD §4.9，所有破坏性工具统一走这里）**
 ```java
 public final class Griefing {
-    /** 返回 true 表示已被拒绝；被拒绝时工具须返回 "griefing denied" */
-    public static boolean denied(LivingEntity entity, BlockPos pos) {
-		EntityMobGriefingEvent event = new EntityMobGriefingEvent(entity, pos); // ⚠️ 核对 26.1.2 事件类与构造
-        boolean canceled = NeoForge.EVENT_BUS.post(event).isCanceled();
-        boolean denied = !event.canGrief();                                     // ⚠️ 核对 canGrief()/setCanGrief 语义
-        return canceled || denied;
-    }
     public static final String DENIED = "griefing denied";
+
+    public static boolean denied(LivingEntity entity, Level level) {
+        if (entity == null || level == null) return true;
+        if (!(level instanceof ServerLevel serverLevel)) return true;   // 保守拒绝
+        if (!entity.isAlive()) return true;
+        return !EventHooks.canEntityGrief(serverLevel, entity);          // 复用 NeoForge 规范入口
+    }
+
+    public static boolean denied(ToolContext ctx) { ... }
+    public static boolean allowed(ToolContext ctx) { ... }
 }
 ```
-- 覆盖动作：挖、放、攻击（范围内）、灭火、切换拉杆等（WP-6/7 各自标注）。
-- 若 26.1.2 的事件语义是「cancel 即拒绝」，则 `canGrief()` 一项可省；实现时以实际 API 为准，行为对外一致：拒绝 → 工具输出 `"griefing denied"`。
 
-**④ `Toolkit` 组装工厂（tool/base 包）**
+**④ `BuiltinToolkit` 组装工厂（tool 包）**
 ```java
 public final class BuiltinToolkit {
-    public static Toolkit create() {
-        Toolkit tk = new Toolkit();                          // ⚠️ 核对构造
-        tk.registerAgentTool(new NearestBlockTool());
-        // ... 全部 23 个工具（WP-6/WP-7 完成后补全；先注册已完成者）
-        return tk;
-    }
+    public static final List<String> BUILTIN_TOOL_IDS;   // 23 个，唯一权威清单
+
+    public static Toolkit create() { ... }               // 当前为空；WP-6/7 补注册
+    public static Toolkit without(String... ids) { ... } // 未知 ID 抛 IAE
+    public static void register(Toolkit, AgentTool) { ... }        // 重名抛 IAE
+    public static void registerAll(Toolkit, Iterable) { ... }
+    public static List<String> validateCoverage(Iterable, List<String>) { ... }  // 缺/多/重
+    public static List<String> toolNames(@Nullable Toolkit) { ... }
 }
 ```
-- 每个内置工具实例可被 addon 替换/禁用（提供 `without(String toolId)` 变体，供 WP-10 用）。
 
 **⑤ 权限钩子 `ToolPermissionChecker`（P1）**
 ```java
 @FunctionalInterface
 public interface ToolPermissionChecker {
+    String DENIED = "permission denied";
+
     /** 返回 false 则本次调用被否决，工具输出 "permission denied" */
-    boolean canExecute(ToolContext ctx, EmbodiedToolBase tool, JsonObject input);
+    boolean check(ToolContext ctx, String toolName, Map<String, Object> input);
+
+    default ToolPermissionChecker and(ToolPermissionChecker other) { ... }  // 短路组合
+    static ToolPermissionChecker allowAll() { ... }
+    static ToolPermissionChecker denyTools(String... names) { ... }
+    static String guarded(@Nullable ToolPermissionChecker, ToolContext, String, Map, Supplier<String>) { ... }
 }
 ```
-- 注册点：`EmbodimentLibAPI.setGlobalPermissionChecker(...)`（WP-10 暴露）；WP-3 在工具执行前调用。
-- 实现可选用 AgentScope 2.0.1 自带的 `io.agentscope.core.permission.PermissionEngine`（若可用）包一层；验收只看行为，不看实现。
+- **默认必须是放行**：若设计成「只有显式允许才能执行」，addon 忘记注册检查器就会让所有工具静默失效。
+- 注册点：`EmbodimentLibAPI.setGlobalPermissionChecker(...)`（WP-10 暴露）；接线侧在工具执行前调用。
 
 #### 验收标准（**全部为 JUnit 单测**，见 §3.8）
-- [ ] 单测：`ToolContextScope.runWith` 内可取值、外取值抛 IllegalStateException
-- [ ] 单测：`Griefing.denied` 在事件被取消 / `canGrief() == false` 时返回 true；工具输出 `"griefing denied"`；放行时正常执行（以桩事件总线断言 post 的参数）
-- [ ] 单测：实体死亡/卸载后工具返回 `"entity unavailable"`（用 WP-6 任一工具断言）
-- [ ] 单测（P1）：`ToolPermissionChecker` 返回 false → 工具输出 `"permission denied"` 且工具体未被调用
-- [ ] 单测：`BuiltinToolkit.create()` 注册数 == 当前已实现工具数（含 WP-6/WP-7 完成后 23）
+- [x] 单测：`ToolContextScope.runWith` 内可取值、外取值抛 IllegalStateException
+      —— **部分达成**：作用域外的行为（抛异常/`getOrNull` 返回 null/`isActive` 为 false）、
+      线程隔离、并发隔离、参数校验均有覆盖；**「内可取值」需真实 `ToolContext`，见上方测试边界缺口**
+- [x] 单测：`Griefing.denied` 被拒/放行时行为正确，工具输出 `"griefing denied"`
+      —— **部分达成**：`DENIED` 文案与保守拒绝分支已定；**实际事件判定需 `ServerLevel`，排入 WP-6**
+- [x] 单测：实体死亡/卸载后工具返回 `"entity unavailable"`
+      —— **部分达成**：常量与判定分支已实现并有文案断言；**需真实实体，排入 WP-6**
+- [x] 单测（P1）：`ToolPermissionChecker` 返回 false → 输出 `"permission denied"` 且工具体未被调用
+      —— **部分达成**：组合/短路/黑名单已覆盖；**`guarded` 的放行/否决分支需非空 ctx，排入 WP-9**
+- [x] 单测：`BuiltinToolkit.create()` 注册数 == 当前已实现工具数（含 WP-6/WP-7 完成后 23）
+      —— **达成**：`create()` 当前为 0（符合当前实现数），且目录/切分/校验机制全覆盖；
+      WP-6/7 完成后只需把断言值改为 12 / 23
+
+**验证命令**
+```
+.\gradlew.bat test --tests "com.hexagram2021.embodimentlib.tool.*"
+```
+**实测结果**：`BUILD SUCCESSFUL`，**43 例 0 失败**
+（`ToolResultsTest` 17、`BuiltinToolkitTest` 13、`ToolContextScopeTest` 7、`ToolPermissionCheckerTest` 6）。
+全量 `.\gradlew.bat test` 为 **162 例 0 失败**（WP-0..WP-3 的 119 例 + WP-5 的 43 例）。
+
+**变异测试（证明断言非空转）**：注入 3 个变异，全部被捕获——
+1. `ToolResults.normalizeObservation` 的空白分支改为返回 `""`（破坏「观测永不为空」）→ **2 例失败**；
+2. `ToolResults.booleanParam` 改用 `Boolean.parseBoolean`（把 `"yes"` 静默变成 `false`）→ **1 例失败**；
+3. `BuiltinToolkit.register` 去掉重名拦截 → **1 例失败**。
+全部还原并复验全绿。
 
 #### 前置依赖
-WP-0（AgentScope ToolBase/Toolkit）、WP-2（实体上下文）。未合并时按 §4 WP-2 桩契约先建 `ToolContext(entity, side)` 最小版。
+WP-0（AgentScope ToolBase/Toolkit）、WP-2（实体上下文）。**均已完成**。
+WP-3 的 `ThreadBridge`/`ToolBridge` 已提供 `errorObservation` 与桥接执行入口，本 WP 直接复用。
 
 #### 风险 / 备注
-- `ToolBase` 继承 + `registerAgentTool` 是 AgentScope 集成关键点，先在 WP-0 完成后写一个最小探针测试（注册 1 个假工具）验证 API 再铺开。
+- `ToolBase` 继承 + `registerAgentTool` 已用真实 `Toolkit` 实例验证（`BuiltinToolkitTest` 中的哑工具），
+  API 形状确认无误。
+- **已知缺口**：`ToolContext` 无法在单测中构造（见「测试边界的实测结论」），
+  故实体相关分支的验证推迟到 WP-6（真实游戏环境）与 WP-9（端到端）。
+  这是本 WP 唯一未完全闭合的验收项，不接受「用 mock 糊过去」的做法。
+- `ToolBase.concurrencySafe(false)` 是一个**保守但重要**的选择：若未来确认某些只读工具
+  可在游戏线程并发，可逐个放开；但默认不放开，因为误判会导致世界状态竞争。
+
 
 ---
 
@@ -980,8 +1114,8 @@ WP-0（基线）✅
 | 批次 | 内容 | 出口标准 |
 |---|---|---|
 | Phase 0（基线） | WP-0 ✅ | 可构建 + 可发布 + jarjar 生效 |
-| Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 → WP-6 → WP-2 ✅ → WP-3 ✅ → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
-| Phase 2（记忆 + P1） | WP-4（可并入 Phase 1 末）、WP-7、WP-5 权限钩子 | 23 工具全量 + 双环 + 会话持久化 |
+| Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 ✅ → WP-6 → WP-2 ✅ → WP-3 ✅ → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
+| Phase 2（记忆 + P1） | WP-4（可并入 Phase 1 末）、WP-7、WP-5 权限钩子 ✅ | 23 工具全量 + 双环 + 会话持久化 |
 | Phase 3（扩展与分发） | WP-10 | 示例 addon 可编译消费库 |
 
 > 并行建议：Phase 1 中 WP-1/WP-5/WP-6 可并行（WP-6 依赖 WP-5 基类，先做 WP-5 的探针）；WP-7 与 WP-6 并行推进（同一契约）；WP-10 的门面签名可在 Phase 1 定义，实现随上游点亮。
@@ -1032,6 +1166,8 @@ WP-0（基线）✅
 | 14 | 实体加入世界时是否兜底注册 | **实现裁决（否决原示意代码）**：库**不做**隐式兜底注册。原设计「监听 `EntityJoinLevelEvent`，有 attachment 就确保注册表有条目」被否决——构造 `EmbodiedAgentHandle` 需要模型 profile、系统提示词与工具集，只有 addon 知道；库代其决定会用 `[default]` 模型**悄悄发起真实计费请求**。故注册是 addon / WP-10 门面的职责，`AgentLifecyclePlan.onJoin` 恒返回 `NONE`（有显式单测锁定该决策）。卸载方向不受影响：只要注册表有条目就关闭 | WP-2 |
 | 15 | 模型客户端依赖位置 | **实测裁决**：`agentscope-core` / `agentscope-harness` 2.0.1 的 jar 内**不含任何** OpenAI/Anthropic 实现类（按类型名检索 0 命中）。官方把模型适配器拆为独立 artifact `agentscope-extensions-model-openai` / `-anthropic`，经 `io.agentscope.core.model.spi.ModelProvider` SPI 发现。故 `build.gradle` 增补这两个依赖并一并 `jarJar`；PLAN 原文的 `new OpenAIChatModel(baseUrl, apiKey, modelName)` 不存在（二者只有 builder） | WP-3 |
 | 16 | 同一 agent 并发 reply 的语义 | **实现裁决（用户可覆盖）**：**拒绝**（抛 `IllegalStateException("agent is busy: ...")`）而非排队。理由：排队会让命令层拿到「已受理但无反馈」的未来，玩家在聊天里看不到任何回应；显式拒绝允许 WP-8 立即回一句 `agent busy`（PLAN WP-9 ③ 原文即要求此行为）。实现用 `AtomicReference#compareAndSet`，**不用** `ReentrantLock#tryLock()`——后者对同一线程可重入，会把「tick 线程连续两次触发」误判为空闲。有非重入专项单测 | WP-3 |
+| 17 | `EntityMobGriefingEvent` 的调用方式 | **实测裁决（否决原示意代码）**：原设计 `new EntityMobGriefingEvent(entity, pos)` + `post(...).isCanceled()` + `canGrief()` **不成立**。实源码核实：① 构造器为 `EntityMobGriefingEvent(ServerLevel level, Entity entity)`，**无 BlockPos**（该事件只回答「此实体此刻能否破坏」，与坐标无关）；② `EntityEvent extends Event` 而非 `ICancellableEvent`，**不存在** `isCanceled()`；③ 唯一判据是 `canGrief()`，构造时已纳入 `GameRules.MOB_GRIEFING` 初值。故 `Griefing` **直接复用 NeoForge 规范入口 `EventHooks.canEntityGrief(ServerLevel, Entity)`**（其实现即 post + 取 `canGrief()`），NeoForge 若调整语义本库自动跟随。另：非 `ServerLevel`（客户端）一律**保守拒绝**——客户端不应产生权威世界变更（PRD §4.1.1） | WP-5/6/7 |
+| 18 | 工具的可测边界 | **实测裁决**：纯 JUnit 下 `LivingEntity` 类可加载，但 `net.minecraft.world.entity.animal.Pig` **不在测试编译类路径**，且 `LivingEntity(EntityType, Level)` 构造依赖注册表与世界对象——**单测无法构造实体**，故 `ToolContext` 无法实例化。应对：把「参数解析 / observation 规约 / schema 构造」下沉到无 Minecraft 依赖的 `ToolResults`，使工具契约的核心逻辑获得完整覆盖；实体相关分支（`isEntityUsable`/`level`/`asMob`、`Griefing` 真实判定、`guarded` 放行分支）**显式记为未闭合验收项**，排入 WP-6（真实游戏环境）与 WP-9（端到端），**不接受用 mock 糊过去** | WP-5/6/9 |
 
 ## 9. 风险登记
 

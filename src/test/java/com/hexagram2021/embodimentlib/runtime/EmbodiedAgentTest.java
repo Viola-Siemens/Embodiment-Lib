@@ -1,15 +1,16 @@
 package com.hexagram2021.embodimentlib.runtime;
 
+import com.google.common.collect.Lists;
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
 import com.hexagram2021.embodimentlib.api.AgentProfile;
 import com.hexagram2021.embodimentlib.attach.AgentState;
 import com.hexagram2021.embodimentlib.attach.RegistryEntry;
 import com.hexagram2021.embodimentlib.attach.ToolCallRecord;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -134,7 +135,7 @@ class EmbodiedAgentTest {
 				entered.countDown();
 				try {
 					release.await(5, TimeUnit.SECONDS);
-				} catch (InterruptedException ex) {
+				} catch (InterruptedException _) {
 					Thread.currentThread().interrupt();
 				}
 				guard.exit();
@@ -144,7 +145,7 @@ class EmbodiedAgentTest {
 		assertTrue(entered.await(2, TimeUnit.SECONDS));
 
 		// 另起 4 个线程竞争：全部应立即被拒绝（而不是阻塞等待）。
-		List<Thread> contenders = new ArrayList<>();
+		List<Thread> contenders = Lists.newArrayList();
 		for (int i = 0; i < 4; i++) {
 			Thread t = new Thread(() -> {
 				if (guard.tryEnter(AgentState.REASONING)) {
@@ -242,8 +243,8 @@ class EmbodiedAgentTest {
 
 		List<ToolCallRecord> recent = entry.recentToolCalls();
 		assertEquals(RegistryEntry.RECENT_TOOL_CALL_LIMIT, recent.size(), "应保留固定上限条数");
-		assertEquals("tool11", recent.get(0).toolName(), "最新的应排在最前");
-		assertEquals("tool4", recent.get(recent.size() - 1).toolName(), "最旧的应最先被丢弃");
+		assertEquals("tool11", recent.getFirst().toolName(), "最新的应排在最前");
+		assertEquals("tool4", recent.getLast().toolName(), "最旧的应最先被丢弃");
 	}
 
 	@Test
@@ -256,7 +257,7 @@ class EmbodiedAgentTest {
 	@Test
 	@DisplayName("会话预览不含 api key 且受长度上限约束（PRD §4.1.1 隐私硬约束）")
 	void previewNeverLeaksApiKey() {
-		AtomicReference<String> captured = new AtomicReference<>();
+		AtomicReference<@Nullable String> captured = new AtomicReference<>();
 
 		// 复现 EmbodiedAgent#conversationPreview 的拼接逻辑，断言其中不含敏感字段。
 		ExecutionGuard guard = new ExecutionGuard();

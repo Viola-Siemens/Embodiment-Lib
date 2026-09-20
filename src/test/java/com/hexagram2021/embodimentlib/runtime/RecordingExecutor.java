@@ -1,6 +1,7 @@
 package com.hexagram2021.embodimentlib.runtime;
 
-import java.util.ArrayList;
+import com.google.common.collect.Lists;
+
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -61,7 +62,7 @@ final class RecordingExecutor implements GameThreadExecutor {
 	 * @return 本次执行的任务数
 	 */
 	int drain() {
-		List<Runnable> batch = new ArrayList<>(this.pending);
+		List<Runnable> batch = Lists.newArrayList(this.pending);
 		this.pending.clear();
 		batch.forEach(task -> {
 			this.executedThreadNames.add(Thread.currentThread().getName());

@@ -52,11 +52,12 @@ Embodiment-Lib
 │   │   │   ├── config/                 # WP-1：EmbodimentConfig、HostConfig、AgentProfileConfig
 │   │   │   ├── attach/                 # WP-2：AttachmentTypes、AgentAttachment、AgentRegistry、RegistryEntry、AgentLifecycle(/Plan)、EmbodiedAgentHandle
 │   │   │   ├── runtime/                # WP-3：EmbodiedAgent、AgentLoop、ThreadBridge、ToolBridge、ExecutionGuard、ModelFactory、GameThreadExecutor
+│   │   │   ├── tool/                   # WP-5：EmbodiedToolBase、ToolContext(Scope)、ToolResults、Griefing、BuiltinToolkit、ToolPermissionChecker
 │   │   │   └── gametest/               # WP-1：ConfigGameTests（冒烟）
 │   │   ├── resources/pack.mcmeta       # pack_format 84 + min/max_format（26.1 schema）
 │   │   └── templates/META-INF/neoforge.mods.toml   # 占位符模板，构建时展开
 │   └── test/java/com/hexagram2021/embodimentlib/   # 验收唯一依据（JUnit 5）
-│       ├── api/ config/ attach/ runtime/           # 与主源集同构
+│       ├── api/ config/ attach/ runtime/ tool/     # 与主源集同构
 │       │   └── runtime/                # 另含测试桩 FakeModel（脚本化模型）、RecordingExecutor（手动 drain 游戏线程桩）
 ├── src/generated/resources/            # datagen 输出（当前为空）
 ├── build.gradle        # moddev 2.0.141；JarInJar 打入 AgentScope；publish 到 repo/
@@ -117,15 +118,18 @@ Embodiment-Lib
 | 线程规则            | LLM HTTP 在 IO 池；工具体**必须**桥到游戏线程（SERVER=服务器线程 / CLIENT=客户端线程）；`meta.wait` 非阻塞，绝不 park 游戏线程。实现见 `runtime/ThreadBridge`：**派发不含等待**，等待发生在 IO 线程侧（`CompletableFuture#get(timeout)`），方向由 `ThreadBridge.executorFor(side, server, client)` 唯一裁决 |
 | 运行时包装（`runtime/`） | WP-3：`EmbodiedAgent`（包装 `HarnessAgent`，实现 `EmbodiedAgentHandle`；`reply()` 返回 `Mono<String>`）；`AgentLoop`（`REACT_STEP` 逐步环 P0 / `BATCH_TOOLS` 批量环 P1；默认 12 步）；`ToolBridge`（工具异常/超时/空/null → 文本 observation，**永不抛异常**；`null` 与「超时」用引用比较哨兵区分）；`ExecutionGuard`（**忙碌即拒绝而非排队**，用 CAS 不用可重入锁——同线程重入会被误判为空闲）；`ModelFactory`（按 protocol 造 `OpenAIChatModel`/`AnthropicChatModel`） |
 | `GameThreadExecutor` | WP-3 测试缝：把「排到本端游戏线程」抽为端口（真实实现 = `server.execute` / `Minecraft#execute`），使桥接的**方向**与**零 park** 可在无游戏进程下单测（`RecordingExecutor.manual()` + `drain()`） |
-| Griefing        | 破坏性动作（挖/放/攻击…）先 post `EntityMobGriefingEvent`，被拒 → 返回 `"griefing denied"`                                                                                                                                                                                                                                                            |
+| Griefing        | 破坏性动作（挖/放/攻击…）先过 `tool/Griefing.denied(...)`，被拒 → 返回 `"griefing denied"`。**不要自行 `new EntityMobGriefingEvent(entity, pos)`**——该构造器在 26.1.2 是 `(ServerLevel, Entity)`、**无 pos**，且事件**不可取消**（`EntityEvent extends Event`，非 `ICancellableEvent`），唯一判据是 `canGrief()`；`Griefing` 复用 NeoForge 规范入口 `EventHooks.canEntityGrief`。非 `ServerLevel`（客户端）一律保守拒绝（PLAN §8 决策 17） |
+| 工具契约（`tool/`） | WP-5：`EmbodiedToolBase`（继承 AgentScope `ToolBase`，`run` → observation，异常/空/null 全转文本）；`ToolContext`（record：side/entity/agentType/sessionId）+ `ToolContextScope`（ThreadLocal，**可嵌套**且**不继承到子线程**）；`ToolResults`（**无 Minecraft 依赖的纯逻辑层**：参数解析/observation 规约/schema 构造）；`BuiltinToolkit`（23 工具唯一清单 `BUILTIN_TOOL_IDS` + 装配/去重/裁剪/覆盖度校验——P0/P1 是内部口径，**不暴露为 API**；`create()` 当前为空，待 WP-6/7 注册）；`ToolPermissionChecker`（否决钩子，**默认放行**） |
+| 单测的实体边界 | **实测：纯 JUnit 无法构造 `LivingEntity`**——`Pig` 不在测试编译类路径，且 `LivingEntity(EntityType, Level)` 需注册表与世界。故 `ToolContext` 无法实例化：`isEntityUsable`/`level`/`asMob`、`Griefing` 真实判定、`guarded` 放行分支**均未闭合**，排入 WP-6/WP-9（PLAN §8 决策 18）。写工具逻辑时**把可纯函数化的部分放进 `ToolResults` 式无依赖类**，否则拿不到覆盖 |
 | 日志              | SLF4J，logger 名空间 `embodimentlib`（子域 `embodimentlib.config/runtime/tool/command`）                                                                                                                                                                                                                                                     |
 
 ## 7. 工作方式（AI 执行约定）
 
 1. **PRD 是需求唯一权威**；PLAN.md 是它的可执行分解——11 个工作包（WP-0…WP-10），MECE：每个 WP 独立、可单测、有验收清单与验证命令。
 2. **执行顺序**：先 P0 链（WP-1→WP-5→WP-6→WP-2→WP-3→WP-8→WP-9），再 WP-4/WP-7/P1 项，最后 WP-10；依赖图见 PLAN §5。
-3. **当前进度**：WP-0 ✅、WP-1 ✅（配置系统：`AgentHostSide` + ModConfigSpec 双端 TOML + Profile 路由——routing 为 List、profiles 为 JSON 列表，见 §6 配置行）、WP-2 ✅（实体附着 + 双端注册表：`attach/` 包提供 `agent_type`/`session_id` 附着、`AgentRegistry` 双端单例、`RegistryEntry`、`AgentLifecycle` 生命周期钩子）、WP-3 ✅（代理运行时：`runtime/` 包提供 `EmbodiedAgent`、`AgentLoop` 双环、`ThreadBridge`/`ToolBridge` 游戏线程桥接、`ExecutionGuard` 串行化、`ModelFactory` 模型工厂）；下一步 **WP-5**（工具契约与基础设施）。
-   ⚠️ **注意 WP-4 与 WP-5 的依赖顺序**：PLAN §5.1 的 P0 链是 WP-1→WP-5→WP-6→WP-2→WP-3→WP-8→WP-9，WP-3 已落地但 WP-5 尚未开始；WP-3 通过 `@Nullable Toolkit` 参数与 `ToolBridge` 端口解耦，WP-5 落地后无需改动 WP-3 代码。
+3. **当前进度**：WP-0 ✅、WP-1 ✅（配置系统：`AgentHostSide` + ModConfigSpec 双端 TOML + Profile 路由——routing 为 List、profiles 为 JSON 列表，见 §6 配置行）、WP-2 ✅（实体附着 + 双端注册表：`attach/` 包提供 `agent_type`/`session_id` 附着、`AgentRegistry` 双端单例、`RegistryEntry`、`AgentLifecycle` 生命周期钩子）、WP-3 ✅（代理运行时：`runtime/` 包提供 `EmbodiedAgent`、`AgentLoop` 双环、`ThreadBridge`/`ToolBridge` 游戏线程桥接、`ExecutionGuard` 串行化、`ModelFactory` 模型工厂）、WP-5 ✅（工具契约与基础设施：`tool/` 包提供 `EmbodiedToolBase`、`ToolContext`+`ToolContextScope`、`ToolResults`、`Griefing`、`BuiltinToolkit`、`ToolPermissionChecker`）；下一步 **WP-6**（P0 内置工具 12 个）。
+   ⚠️ **WP-5 留有未闭合的验收项**：`ToolContext` 需要真实 `LivingEntity`，纯 JUnit 构造不出来，故实体相关分支（`Griefing` 真实判定、`guarded` 放行分支、`"entity unavailable"`）**推迟到 WP-6/WP-9 验证**；写 WP-6 工具时须把可纯函数化的逻辑放进无 Minecraft 依赖的类（见 §6「单测的实体边界」、PLAN §8 决策 18）。
+   ⚠️ **WP-6 可直接开工**：WP-5 的 `BUILTIN_TOOL_IDS` 已给出 23 个 ID 的唯一权威清单（P0/P1 是内部口径、<b>不暴露为 API</b>），`EmbodiedToolBase` 基类与 `BuiltinToolkit.register` 已就绪，WP-6 只需实现 P0 的 12 个工具类并注册；`BuiltinToolkitTest` 中「注册数为 0」的断言届时改为 12。
 4. **测试与验收标准（重要）**：**验收以 `.\gradlew.bat test` 单测全绿为准**，不得把 GameTest 作为验收依据。26.1 起**没有 `@GameTest` 注解**，且 `TEST_FUNCTION` 注册表 bootstrap 早于 mod 构造，**mod 无法注册自定义测试函数**，因此 GameTest 只能做「注册链/生命周期」的冒烟验证（现有 `embodimentlib:wiring_smoke` 用 vanilla 内置 `minecraft:always_pass` 函数键走通链路），无法承载真实行为断言。**所有行为断言一律写 JUnit 单测**（PLAN §8 决策 10）；`runGameTestServer` 仅作启动冒烟，不计入验收。
 5. 每个 WP 完成 = 验收标准全部勾选 + `.\gradlew.bat test` 全绿 + **更新 PLAN.md 该 WP 状态行**（⬜/🚧/✅）。
 6. 不确定的第三方 API（主要是 AgentScope 2.0.1 签名）：先阅读源码和 JavaDoc 核对再落码，禁止臆造。**源码一律从 `../Sources-26.1.2/` 读**（见 §9），不要在源码缺失时自行解压/反编译 jar——直接告诉用户缺哪个依赖的源码。
