@@ -9,6 +9,7 @@ import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.skill.SkillFilter;
+import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.jspecify.annotations.Nullable;
@@ -83,13 +84,18 @@ public final class EmbodiedAgent implements EmbodiedAgentHandle {
 	 * @param systemPrompt 系统提示词
 	 * @param toolkit 工具集（可为 null 表示无工具）
 	 * @param sessionDir 会话工作目录（AgentScope workspace；null 则用其默认目录）
+	 * @param stateStore 会话历史的状态存储（WP-4 的 {@code SessionStore#openStateStore} 产出；
+	 *                   null 表示本次会话不落盘——AgentScope 会退化为默认的
+	 *                   {@code ~/.agentscope/state/<agentId>}，那既不在存档目录里、
+	 *                   也跨存档共享，故生产接线<b>必须</b>传入）
 	 * @param loop 循环策略
 	 * @param modelFactory 模型工厂（生产用 {@link ModelFactory#defaultFactory()}）
 	 * @return 构建好的智能体
 	 */
 	public static EmbodiedAgent create(AgentHostSide side, String agentType, String sessionId,
 									   AgentProfile profile, @Nullable String systemPrompt, @Nullable Toolkit toolkit,
-									   @Nullable Path sessionDir, AgentLoop loop, ModelFactory modelFactory) {
+									   @Nullable Path sessionDir, @Nullable AgentStateStore stateStore,
+									   AgentLoop loop, ModelFactory modelFactory) {
 		Objects.requireNonNull(side, "side");
 		Objects.requireNonNull(agentType, "agentType");
 		Objects.requireNonNull(sessionId, "sessionId");
@@ -113,6 +119,12 @@ public final class EmbodiedAgent implements EmbodiedAgentHandle {
 		if (sessionDir != null) {
 			// 会话持久化交给 AgentScope workspace（PLAN §8 决策 6）。
 			builder.workspace(sessionDir);
+		}
+		if (stateStore != null) {
+			// WP-4：对话历史的落盘载体。AgentScope 在每次推理后把 AgentState（含对话缓冲）
+			// 写入该存储，并按 (userId=null, sessionId) 在下次构建时自动续上——
+			// 这就是 PRD §4.4「每具身体有自己的历史」的落点。
+			builder.stateStore(stateStore);
 		}
 
 		// 关掉与 Minecraft 场景无关的 harness 能力：这些默认开启的特性会创建额外的
@@ -234,8 +246,12 @@ public final class EmbodiedAgent implements EmbodiedAgentHandle {
 	/**
 	 * 会话预览（供 WP-8 检查命令；PLAN WP-3 ③）。
 	 * <p>
-	 * TODO WP-4 提供会话读取接口后接真实历史；当前返回会话身份摘要，
-	 * 且<b>绝不</b>包含 api_key 或完整会话内容（PRD §4.1.1 隐私硬约束）。
+	 * 这里只给出<b>会话身份与运行状态</b>的摘要，不读会话内容：
+	 * 真实历史由 WP-4 的 {@code SessionStore} 落盘（见
+	 * {@code SessionStore#historyPath}/{@code #hasHistory}），
+	 * 由 WP-8 的 {@code InspectReportBuilder} 负责读取与截断展示——
+	 * 本类不解析 AgentScope 的消息 schema，也不承担「哪些字符能外泄」的判断。
+	 * 无论谁来做，输出路径都<b>绝不</b>包含 api_key 或完整会话内容（PRD §4.1.1 隐私硬约束）。
 	 *
 	 * @param maxChars 最大字符数
 	 * @return 截断后的预览文本

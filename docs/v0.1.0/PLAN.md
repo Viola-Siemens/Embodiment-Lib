@@ -36,7 +36,7 @@
 | WP-1 | 配置系统：`AgentHostSide` + 双端 TOML + Profile 路由 ✅ | §4.1.1, §4.3, §6.4(配置) | P0 |
 | WP-2 | 实体附着（Attachment）+ 双端 Agent 注册表 ✅ | §4.1.2, §4.1.3, §6.3(注册表), §6.4(附着) | P0 |
 | WP-3 | 代理运行时包装（HarnessAgent 包装 + 双环 + 线程桥接）✅ | §4.2, §6.2(运行时), §6.3(线程) | P0 |
-| WP-4 | 会话与记忆持久化（session-id 维度） | §4.4, §6.4(会话) | P0 |
+| WP-4 | 会话与记忆持久化（session-id 维度）✅ | §4.4, §6.4(会话) | P0 |
 | WP-5 | 工具契约与基础设施（含权限钩子、Griefing 集成）✅ | §4.5(契约), §4.6(权限), §4.9, §6.2(工具) | P0（权限钩子 P1） |
 | WP-6 | P0 内置工具（12 个）✅ | §4.5 #1,2,3,6,7,9,10,11,13,16,22,23；§5 P0 | P0 |
 | WP-7 | P1 内置工具（11 个）✅ | §4.5 #4,5,8,12,14,15,17,18,19,20,21；§5 P1 | P1 |
@@ -547,58 +547,116 @@ WP-3 只负责「把工具体桥到游戏线程并把失败转文本」。addon 
 
 ### WP-4 会话与记忆持久化（session-id 维度）
 
-- **状态**：⬜
+- **状态**：✅（2026-09-18）
 - **PRD 映射**：§4.4（会话记忆）、§6.4（会话文件位置）
 - **目标**：按 `(host-side, session-id)` 持久化会话历史、工作记忆、待办清单；目录隔离；生命周期与实体卸载同步。
 - **范围（内）**：`SessionStore`（按 side+session-id 定位目录）；`SessionData`（working memory、todo、历史访问）；加载/保存钩子。
 - **范围（外）**：向量库/长期记忆摘要（PRD 明确 0.1 不做）；跨实体共享会话（PRD §4.1.3 明确 addon 层职责）。
 
-#### 关键设计
+#### 实现定稿：分层与文件
+
+```
+memory/
+├── SessionPaths.java      # 纯逻辑：目录布局 + session-id 合法性（含穿越 / 保留设备名拦截）
+├── SessionSink.java       # 纯逻辑：写穿端口（把副作用挪出数据层）
+├── SessionData.java       # 纯逻辑：工作记忆 + 待办，改动即写穿
+├── SessionStore.java      # 适配器：本端根解析 + Gson 读写 + 缓存 + 状态存储/历史查询
+└── SessionLifecycle.java  # 接线：实体消失 → evict；存档/停服 → flushAll
+```
 
 **① 目录（PRD §6.4 硬约束）**
 ```
 SERVER: <world dir>/embodimentlib/sessions/<session-id>/
 CLIENT: <config dir>/embodimentlib/sessions/<session-id>/
+  memory.json                     ← 工作记忆 {"key":"value"}（本库自管）
+  todo.json                       ← 待办清单 ["item", ...]（本库自管）
+  __anon__/<session-id>/
+    agent_state.json              ← 会话历史（AgentScope 状态存储自管）
 ```
-- 世界根：`ServerLevel.getServer().getWorldPath(LevelResource.ROOT)`。
+- 世界根：`ServerLifecycleHooks.getCurrentServer().getWorldPath(LevelResource.ROOT)`。
 - 客户端根：`FMLPaths.CONFIGDIR.get()`。
-- 两棵树**永不合并**（各 `SessionStore` 只认自己的 side 根）。
+- 两棵树**永不合并**（各 `SessionStore` 只认自己的 base）；根目录**每次调用重新解析**——单人存档「退回标题再进另一个世界」时 JVM 不重启，缓存旧世界路径会把新会话写进上一个存档。
 
 **② `SessionData` 与文件**
-```java
-public final class SessionData {
-    private final Map<String, String> workingMemory = new LinkedHashMap<>(); // memory.json
-    private final List<String> todo = new ArrayList<>();                     // todo.json
-    // 会话历史：0.1 委托 HarnessAgent workspace（WP-3 决策）；若回退，则存 history.json
-}
-```
-- 序列化：Gson（MC 自带）。`memory.json`：`{"key": "value"}`；`todo.json`：`["item1", ...]`。
-- 历史：优先走 AgentScope workspace 持久化（构建时把 `workspace` 指向该 session 目录）；`SessionStore` 提供 `historyPath()` 供 WP-3 使用。
+- `memory.json`：Gson 序列化的 `{"key":"value"}`；`todo.json`：`["item", ...]`。
+- 写穿：每个**真正改变数据**的方法立即 `sink.save(...)`；未改变数据的调用（删不存在的键、重复加同一条待办）**不**写盘。
+- 会话历史：**委托 AgentScope 的 `AgentStateStore`**（见偏差 1），本库只提供 `openStateStore` / `historyPath` / `hasHistory` / `historySizeBytes`，不解析其消息 schema。
 
-**③ `SessionStore`**
+**③ `SessionStore`（对外契约）**
 ```java
-public final class SessionStore {
-    public static SessionStore forSide(AgentHostSide side);  // 单例
-    public SessionData load(String sessionId);   // 目录不存在 → 空 SessionData（不报错）
-    public void save(String sessionId, SessionData data);
-    public void delete(String sessionId);        // 用于注册表 unregister 清理（可选）
-    public Path sessionDir(String sessionId);
-}
+public static SessionStore forSide(AgentHostSide side);                 // 生产单例（根按需解析）
+public static SessionStore forRoot(AgentHostSide side, Path baseDir);   // 单测/嵌入式：显式本端根
+public Path sessionDir / memoryFile / todoFile / historyPath(String sessionId);
+public boolean hasHistory(String) / long historySizeBytes(String);
+public @Nullable AgentStateStore openStateStore(String sessionId);
+public SessionData load(String) / void save(String, SessionData);
+public boolean flush(String) / boolean evict(String) / int flushAll();
+public boolean delete(String) / int cachedCount() / int clearCache();
 ```
-- 保存时机：`SessionData` 变更后立即落盘（写穿）+ 服务器 `ServerLifecycleHooks` 保存事件兜底 flush；客户端在会话关闭/退出时 flush。
-- session-id 非法字符（`../` 等路径穿越）必须清洗/拒绝——**安全要求**。
+- 保存时机：写穿 + `SessionLifecycle` 兜底（服务端存档 `LevelEvent.Save`、停服 `ServerStoppingEvent` → `flushAll` + `clearCache`；客户端 `LevelEvent.Unload` → `flushAll`）。
+- session-id 非法字符（`../`、绝对路径、分隔符、Windows 设备名、超长）**一律拒绝**（抛 `IllegalArgumentException`），绝不「清洗后放行」。
+- 落盘一律「临时文件 + 原子改名」，读取失败（损坏/权限）只告警并使用空数据。
+
+#### 偏差记录（对照 PLAN 原文）
+
+1. **会话历史走 AgentScope 的 `AgentStateStore`，而不是 workspace 的会话文件**：PLAN 写「优先走 AgentScope workspace 持久化（构建时把 `workspace` 指向该 session 目录）」。实读 2.0.1 源码后确认：workspace 侧的会话文件（`agents/<agentId>/sessions/<sid>.jsonl`）由 `MemoryFlushMiddleware` 写入，而它**只在设置了 `memoryModel` 时才安装**（`HarnessAgent.Builder` 第 2271 行的 `memoryModel != null && !disableMemoryHooks`）；WP-3 没有（也不需要）memory 模型，故那条路径在 0.1 根本不生效。真正默认生效的是 `AgentStateStore`：`HarnessAgent.build()` 在未显式设置时自动装 `JsonFileAgentStateStore(defaultStateDir(agentId))`，`ReActAgent` 在每次调用后把 `AgentState`（含 `context` 对话缓冲）写入 `agent_state` 键。若不干预，历史会落到 **`~/.agentscope/state/<agentId>/`**——既不在存档目录里，又跨存档共享，直接违反 PRD §4.4。故 WP-4 把 `JsonFileAgentStateStore` 显式指向会话目录，并给 `EmbodiedAgent.create` 增加 `@Nullable AgentStateStore` 参数（`runtime` 只接收现成的存储，不猜目录语义；接线由 WP-9/WP-10 传入 `SessionStore#openStateStore`）。
+2. **磁盘上多一层 `__anon__/<session-id>`**：AgentScope 的状态存储以 `(userId, sessionId)` 两段作键，本库不引入「用户」概念（`RuntimeContext` 的 userId 为 null → `__anon__`），故多出一层。好处是会话仍然**完全自包含**在 `sessions/<session-id>/` 之内：`delete(sessionId)` 删一个目录即彻底清除（已单测）。
+3. **`historyPath` 指向 `agent_state.json`**：PLAN 的 `history.json` 是「回退方案」的名字。实测后确认无需回退（状态存储可靠且默认开启），故历史文件名取 AgentScope 的落盘名，而不是造一个**没人写**的 `history.json`。
+4. **根目录不可用时降级而非报错**：PLAN 未规定。服务器尚未起世界 / 客户端未就绪时：`load` 仍返回**可用的内存态**（智能体照常运行），落盘为 no-op 且**只告警一次**；路径类查询抛 `IllegalStateException`——调用方明确要一个路径时，含糊返回 null 会让下一步 `Files.write` 抛 NPE 而丢失因果关系。
+5. **`SessionPaths` 额外拦截 Windows 保留设备名与超长 id**：PLAN 只要求拦 `../`。`Files.createDirectories(root.resolve("CON"))` 在 Windows 上不会建目录，而是打开控制台设备——写入看似成功却落到设备上；超长 id 会撞路径长度上限。两者各约三行，漏掉的代价却很难查。
+6. **不新增独立的「生命周期决策」类**：WP-2 的 `AgentLifecyclePlan` 值得单独存在，是因为它的决策有「side × 是否已注册 × 实体是否还在」三个输入。这里只有单一输入（缓存里有没有这个会话），而那份判定的真实语义就是 `SessionStore#evict` / `#flushAll` 的返回值——再包一层枚举只会多一份必须同步维护的副本。判定因此留在 `SessionStore` 内，由其单测直接覆盖。
+7. **清理挂在同事件集的自带监听器上，而不是写进 `attach.AgentLifecycle`**：与 WP-7 的 `FollowService` 同一取舍——避免更底层的 `attach` 反向依赖上层持久化设施。
 
 #### 验收标准（**全部为 JUnit 单测**，见 §3.8）
-- [ ] 单测：`load` 不存在目录返回空数据；`save` 后目录/文件结构正确（含路径穿越用例：`sessionId = "../evil"` 被拒绝）
-- [ ] 单测：SERVER 根与 CLIENT 根分离（`forSide(SERVER).sessionDir(id)` 与 `forSide(CLIENT).sessionDir(id)` 不同且互不包含）
-- [ ] 单测：`unregister` 路径触发 `save`（以桩/临时目录断言文件存在）；重新 `load` 内容一致
-- [ ] 单测：两实体同 agent-type 不同 session-id → 数据互不可见（PRD §4.4）
+- [x] 单测：`load` 不存在目录返回空数据；`save` 后目录/文件结构正确（含路径穿越用例：`sessionId = "../evil"` 被拒绝）
+      —— **达成**（`SessionStoreTest`：空加载**且不创建目录**；`memory.json` / `todo.json` 内容逐字断言；
+      11 个入口（`sessionDir`/`memoryFile`/`todoFile`/`historyPath`/`load`/`save`/`flush`/`evict`/`delete`/`openStateStore`/`hasHistory`）全部拒绝，
+      并断言会话根之外没有任何残留目录）
+- [x] 单测：SERVER 根与 CLIENT 根分离（`forSide(SERVER).sessionDir(id)` 与 `forSide(CLIENT).sessionDir(id)` 不同且互不包含）
+      —— **达成**（`SessionPathsTest` 以纯逻辑断言两棵树互不包含；`SessionStoreTest` 追加**端隔离**用例：
+      在 SERVER 存储写入的会话，CLIENT 存储读不到且其目录不存在）
+- [x] 单测：`unregister` 路径触发 `save`（以桩/临时目录断言文件存在）；重新 `load` 内容一致
+      —— **达成**（`evictFlushesThenDropsCache`：先写穿、再把磁盘文件改脏、然后 `evict`，
+      断言文件被内存态**覆盖**且缓存摘除；`reloadReadsBackSameContent` 断言新实例读回一致）。
+      注意：**真实**的 `unregister` 事件接线（`SessionLifecycle` ← `EntityLeaveLevelEvent`）需要实体与事件总线，排 WP-9
+- [x] 单测：两实体同 agent-type 不同 session-id → 数据互不可见（PRD §4.4）
+      —— **达成**（`sessionsAreIsolatedFromEachOther`：内存态与磁盘重载两条路径都断言互不可见；
+      agent-type 不参与本层键，故「同类型」在本层天然隔离）
+
+**验证命令**
+```
+.\gradlew.bat test --tests "com.hexagram2021.embodimentlib.memory.*"
+```
+**实测结果**：全量 `.\gradlew.bat test --rerun-tasks` 为 **353 例 0 失败**（基线 313 + WP-4 新增 40：
+`SessionPathsTest` 10、`SessionDataTest` 12、`SessionStoreTest` 18）。
+`SessionPathsTest` / `SessionDataTest` 是**零文件系统**的纯逻辑用例（后者用记录桩承接写穿），
+`SessionStoreTest` 用 JUnit `@TempDir` 落地真实 IO。
+
+**变异测试（证明断言非空转）**：注入 4 个变异，全部被捕获（共 5 例失败）——
+1. `SessionPaths.isValidSessionId` 去掉 `.` / `..` 拦截（路径穿越重新可用）→ **2 例失败**；
+2. `SessionData.remember` 去掉「值未变则不写盘」（退化为每次都写）→ **1 例失败**；
+3. `SessionStore.evict` 去掉写盘调用（只摘缓存不落盘）→ **1 例失败**；
+4. `SessionPaths.isValidSessionId` 去掉 Windows 保留设备名拦截 → **1 例失败**。
+全部还原并复验全绿。
 
 #### 前置依赖
-WP-1（side 判定）、WP-2（session-id 来源）、WP-3（历史委托接口）。
+WP-1（side 判定）、WP-2（session-id 来源）、WP-3（历史委托接口）。**已完成**。
 
 #### 风险 / 备注
-- 与 WP-3 的 workspace 委托联动：若 AgentScope 自管历史，则 `memory.json/todo.json` 由库自管，二者目录同级不冲突。
+- **生产根目录解析需真实环境**：`forSide` 的两个 base（世界目录 / FML 配置目录）在纯 JUnit 下取不到，
+  单测覆盖的是 `forRoot` 的布局与隔离 + `forSide` 在无环境时的**降级行为**；
+  真实世界目录与客户端配置目录由 WP-9 端到端验证（`runServer` 后确认 `world/embodimentlib/sessions/` 出现）。
+- **`runtime` 侧的接线尚未闭合**：`EmbodiedAgent.create` 新增的 `stateStore` 参数需要调用方（WP-9/WP-10 门面）
+  传 `SessionStore#openStateStore`。WP-3 已确立「测试不构建真实 `HarnessAgent`」的边界，
+  故本 WP 把这条链路验证到 `AgentStateStore` 层面（写一次 → `hasHistory` 为真 → 路径落在会话目录内），
+  「真实 HarnessAgent 在每轮对话后写会话目录」留待 WP-9。
+- **AgentScope 的状态存储布局是外部契约**：`hasHistory` 依赖 `<stateRoot>/__anon__/<sessionId>/agent_state.json`。
+  该假设已被单测钉住（用真实 `JsonFileAgentStateStore` 写一次再断言），因此 AgentScope 升级若改了布局会**立刻红**，
+  而不是静默把历史写到别处。
+- **`FMLPaths` 的源码不在 `../Sources-26.1.2/`**（该目录只有 `net/neoforged/neoforge`，没有 `net/neoforged/fml`）：
+  `FMLPaths.CONFIGDIR.get()` 与 WP-1 已在用的 `ModConfig` 同属缺失源码的 FML API，签名由**编译**核对。
+- **会话目录随实体数增长**：0.1 不做保留期/清理策略（PRD 未要求）；`delete(sessionId)` 已提供，
+  运维可按需清理 `sessions/` 下的闲置目录。
 
 ---
 
@@ -1246,7 +1304,7 @@ WP-0（publish）、WP-2/3/5/6（门面接线）。未合并时先定义接口�
 WP-0（基线）✅
  ├─► WP-1（配置）✅ ──► WP-2（附着/注册表）✅ ──► WP-3（运行时）✅
  │                    │                        ▲
- │                    └────────► WP-4（会话）──┤
+ │                    └────────► WP-4（会话）✅ ─┤
  ├─► WP-5（工具契约）✅ ──► WP-6（P0 工具）✅ ──► WP-7（P1 工具）✅
  │                     │   ▲                  ▲
  │                     │   └──(并行推进)──────┘
@@ -1261,7 +1319,7 @@ WP-0（基线）✅
 |---|---|---|
 | Phase 0（基线） | WP-0 ✅ | 可构建 + 可发布 + jarjar 生效 |
 | Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 ✅ → WP-6 ✅ → WP-2 ✅ → WP-3 ✅ → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
-| Phase 2（记忆 + P1） | WP-4（可并入 Phase 1 末）、WP-7 ✅、WP-5 权限钩子 ✅ | 23 工具全量 ✅ + 双环 + 会话持久化 |
+| Phase 2（记忆 + P1） | WP-4 ✅、WP-7 ✅、WP-5 权限钩子 ✅ | 23 工具全量 ✅ + 双环 + 会话持久化 ✅ |
 | Phase 3（扩展与分发） | WP-10 | 示例 addon 可编译消费库 |
 
 > 并行建议：Phase 1 中 WP-1/WP-5/WP-6 可并行（WP-6 依赖 WP-5 基类，先做 WP-5 的探针）；WP-7 与 WP-6 并行推进（同一契约）——**实际执行为串行**（WP-6 ✅ 后接 WP-7 ✅），理由是两者共用同一批纯逻辑抽取消规则，串行可避免基础设施（`Slots`/`BlockAccess` 等）在同一时间被两处改动；WP-10 的门面签名可在 Phase 1 定义，实现随上游点亮。
@@ -1273,11 +1331,12 @@ WP-0（基线）✅
 1. `.\gradlew.bat build` 与 `.\gradlew.bat publish` 成功；产物 jar 含 AgentScope jarjar。
 2. **`.\gradlew.bat test` 单测全绿（0 失败）——这是唯一验收标准**（覆盖各 WP 的纯逻辑断言）。
 3. `runServer` 手动冒烟：`/summon embodimentlib:demo_agent` → `/embodimentlib inspect` 显示 5 类信息（无 key）→ `/embodimentlib talk` 完成「走→挖→答」（FakeModel 开关演示 + 真 key 演示各一次，记录日志）。手动验证不计入验收，仅作展示。
-4. 双端隔离抽查：CLIENT 端从未读取 `server.toml`（日志断言）；服务器聊天广播不含 key/会话；`AgentRegistry.server() != AgentRegistry.client()` 且条目不跨端可见（WP-2 单测已覆盖）。
+4. 双端隔离抽查：CLIENT 端从未读取 `server.toml`（日志断言）；服务器聊天广播不含 key/会话；`AgentRegistry.server() != AgentRegistry.client()` 且条目不跨端可见（WP-2 单测已覆盖）；**会话树同样分离**——客户端与会话目录不得落在世界目录下（WP-4 单测覆盖「SERVER 写入、CLIENT 读不到」，生产根的真实路径由第 3 项冒烟确认 `world/embodimentlib/sessions/` 出现）。
 5. `mobGriefing=false` 时 `action.mine_block` 返回 `"griefing denied"` 且世界未变（单测覆盖）。
 6. 23 个工具全部注册成功（`BuiltinToolkit.create()` 计数 23 —— **已达成的单测项**：`BuiltinToolkitTest.createRegistersWholeCatalog`），每个工具至少 1 条**单测**通过。
-7. `runGameTestServer` 正常起停（exit 0），无 ERROR/FATAL——**冒烟项，不计入验收**。
-8. addon 视角：示例 addon 自定义工具/事件订阅生效（§4 WP-10 验收）。
+7. 会话持久化抽查：同一 session-id 的两轮对话之间重启服务器，第二轮能续上历史（依赖 AgentScope `AgentStateStore`，WP-9 端到端确认）；`world/embodimentlib/sessions/<session-id>/` 下同时存在 `memory.json`、`todo.json` 与 `__anon__/<session-id>/agent_state.json`。
+8. `runGameTestServer` 正常起停（exit 0），无 ERROR/FATAL——**冒烟项，不计入验收**。
+9. addon 视角：示例 addon 自定义工具/事件订阅生效（§4 WP-10 验收）。
 
 ## 7. 交付物清单
 
@@ -1301,7 +1360,7 @@ WP-0（基线）✅
 | 3 | `/embodimentlib` 命令树 | `inspect`（§4.7 主体）+ `talk`（演示触发器）+ `/emb` 别名；其余子命令延后 | WP-8/9 |
 | 4 | 工具 JSON schema | 逐工具定义于 WP-6/WP-7 表格 | WP-6/7 |
 | 5 | session-id 默认值 | 实体 UUID 字符串（PRD 推荐值，直接采纳） | WP-2/4 |
-| 6 | 会话历史存储 | 委托 AgentScope workspace（按 session 目录）；不可用则回退库自管 `history.json` | WP-3/4 |
+| 6 | 会话历史存储 | **实测更新（WP-4）**：原裁决「委托 AgentScope workspace，不可用则回退库自管 `history.json`」经实源码核对后**不成立**——workspace 侧的会话文件由 `MemoryFlushMiddleware` 写入，而它只在设置了 `memoryModel` 时才安装（`HarnessAgent.Builder` 第 2271 行），0.1 没有 memory 模型，那条路径根本不生效。真正默认生效的是 `AgentStateStore`：`HarnessAgent.build()` 未显式设置时会自动装 `JsonFileAgentStateStore(~/.agentscope/state/<agentId>)`，`ReActAgent` 每轮把 `AgentState`（含对话缓冲）写入 `agent_state` 键。**最终裁决**：不使用回退方案，而是把该状态存储**显式指向会话目录**（`SessionStore#openStateStore` → `<session dir>`），历史因此落在 `<session dir>/__anon__/<sessionId>/agent_state.json`；`memory.json`/`todo.json` 仍由库自管，二者同处一个会话目录。回退方案（库自管 `history.json`）**不再需要**，已被 WP-4 的单测钉住布局 | WP-3/4 |
 | 7 | 演示实体触发器 | `/embodimentlib talk`（命令驱动，符合「command-only」约束） | WP-8/9 |
 | 8 | 权限钩子实现 | 库级 `ToolPermissionChecker`；可包一层 AgentScope 2.0.1 PermissionEngine（若可用） | WP-5/10 |
 | 9 | AgentScope 版本 | 以 PRD 的 2.0.1 为准；若 Maven 不可得，取同线最新稳定版并记录替换 | WP-0 |
@@ -1315,6 +1374,7 @@ WP-0（基线）✅
 | 17 | `EntityMobGriefingEvent` 的调用方式 | **实测裁决（否决原示意代码）**：原设计 `new EntityMobGriefingEvent(entity, pos)` + `post(...).isCanceled()` + `canGrief()` **不成立**。实源码核实：① 构造器为 `EntityMobGriefingEvent(ServerLevel level, Entity entity)`，**无 BlockPos**（该事件只回答「此实体此刻能否破坏」，与坐标无关）；② `EntityEvent extends Event` 而非 `ICancellableEvent`，**不存在** `isCanceled()`；③ 唯一判据是 `canGrief()`，构造时已纳入 `GameRules.MOB_GRIEFING` 初值。故 `Griefing` **直接复用 NeoForge 规范入口 `EventHooks.canEntityGrief(ServerLevel, Entity)`**（其实现即 post + 取 `canGrief()`），NeoForge 若调整语义本库自动跟随。另：非 `ServerLevel`（客户端）一律**保守拒绝**——客户端不应产生权威世界变更（PRD §4.1.1） | WP-5/6/7 |
 | 18 | 工具的可测边界 | **实测裁决**：纯 JUnit 下 `LivingEntity` 类可加载，但 `net.minecraft.world.entity.animal.Pig` **不在测试编译类路径**，且 `LivingEntity(EntityType, Level)` 构造依赖注册表与世界对象——**单测无法构造实体**，故 `ToolContext` 无法实例化。应对：把「参数解析 / observation 规约 / schema 构造」下沉到无 Minecraft 依赖的 `ToolResults`（WP-6/7 进一步下沉到各工具的 `*Logic` 与 `tool/Slots`/`tool/BlockAccess`/`tool/BlockCoordinates` 等纯逻辑类），使工具契约的核心逻辑获得完整覆盖；实体相关分支（`isEntityUsable`/`level`/`asMob`、`Griefing` 真实判定、`guarded` 放行分支、真实寻路/落块/交互/掉落/容器读写/跟随移动）**显式记为未闭合验收项**，排入 WP-9（端到端），**不接受用 mock 糊过去** | WP-5/6/7/9 |
 | 19 | 方块交互 API 的 `Player` 硬约束 | **实测裁决（WP-7）**：26.1.2 的 `BlockState#useItemOn(ItemStack, Level, Player, InteractionHand, BlockHitResult)` 与 `#useWithoutItem(Level, Player, BlockHitResult)` 都**强制要求非空 `Player`**（方块实现会解引用 `player.getDirection()` / `isSecondaryUseActive()` / `openMenu(...)`），而本库作用于任意 `LivingEntity`。裁决：绑定实体是 `Player` → 走原版完整语义；否则返回 `"interaction requires a player body"`。**刻意不伪造 `FakePlayer`**——那会把交互归因到一个不存在于世界的玩家上，触发玩家侧副作用（统计/成就/菜单包/按玩家判定的领地保护），并把 mob 的真实身份与位置全部替换。WP-9 可评估「按方块类型走 mob 自己的原版路径」（如 `DoorBlock#setOpen(@Nullable Entity)`） | WP-7/9 |
+| 20 | session-id 的合法性与会话根目录 | **实现裁决（WP-4）**：session-id 是 addon 给的字符串（最终来自玩家/模型语境），一旦带进 `../`、绝对路径或 Windows 保留设备名，就会变成「读写别的会话甚至别的目录」。裁决：**校验后拒绝（抛 IAE），绝不清洗**——静默清洗会把 `../evil` 变成一个合法目录名，让越权写入变成无人察觉的事实。字符集取 `[A-Za-z0-9._-]{1,64}`，与 AgentScope `JsonFileAgentStateStore` 的「文件系统安全」规则**逐字相同**，因此磁盘段名 == session-id（不会出现「日志里叫 A、磁盘上叫 Base64(A)」），并额外拒绝 `.`/`..` 与 Windows 保留设备名。会话根：服务端取世界目录、客户端取配置目录，两棵树永不合并；根目录**每次调用重新解析**（单人存档切世界时 JVM 不重启，缓存旧路径会把新会话写进上一个存档），不可用时**降级**为内存态 + 一次性告警 | WP-4/9 |
 
 ## 9. 风险登记
 
@@ -1325,6 +1385,10 @@ WP-0（基线）✅
 | 线程桥接并发缺陷（游戏线程 park / 竞态） | 高 | **已实现缓解**（WP-3）：`GameThreadExecutor` 端口 + `RecordingExecutor` 手动 drain 桩，断言「派发不含等待」（drain 前任务仍在队列且 IO 线程已在等）；`ExecutionGuard` 用 CAS 而非可重入锁（同线程重入、跨线程释放各有专项单测）；变异测试确认 3 个关键不变量断言非空转；连续 3 次 `--rerun-tasks` 全绿 |
 | 破坏性工具误伤（griefing 未拦截） | 高 | 统一走 `Griefing.denied` 助手；每个破坏性工具测试 `mobGriefing=false` 用例（WP-6 已覆盖挖掘/攻击，WP-7 已覆盖放置/交互/容器搬运的裁决文本；`mobGriefing=false` 的真实世界未变断言排 WP-9） |
 | P1 工具覆盖面受 26.1.2 API 限制（#14/#15 需 `Player` 身体） | 中 | 已在 §8 决策 19 与 WP-7 偏差 1 如实记录；非玩家身体返回 `"interaction requires a player body"` 而非假装成功；WP-9 决策是否补 mob 侧原版路径（如 `DoorBlock#setOpen`）。库的 P0 主闭环（感知/移动/挖掘/使用物品/攻击/元操作）不受影响 |
+| 会话数据越权写入（session-id 路径穿越） | 高 | **已缓解（WP-4）**：session-id 校验后拒绝而非清洗（字符集 `[A-Za-z0-9._-]{1,64}`，拒 `.`/`..`/分隔符/Windows 设备名），11 个入口全部拦截，且单测断言会话根之外无任何残留；含 4 条针对该校验的变异测试（全部被捕获）。见 §8 决策 20 |
+| AgentScope 状态存储布局变更导致历史写到别处 | 中 | **已缓解（WP-4）**：`historyPath/hasHistory` 依赖 `<stateRoot>/__anon__/<sessionId>/agent_state.json`，该假设由单测用真实 `JsonFileAgentStateStore` 写一次后断言路径落在会话目录内——上游若改布局会**立刻红**，而不是静默改道。另：`openStateStore` 失败时返回 null 并告警，agent 仍可创建（只是不落盘） |
+| 会话文件损坏 / 落盘失败导致加载崩溃或数据丢失 | 中 | **已缓解（WP-4）**：落盘走「临时文件 + 原子改名」；读取失败（JSON 损坏、权限不足）只告警并以空数据开始（单测覆盖「memory.json 损坏而 todo.json 仍可读」）；落盘异常不向上抛，内存态仍可用 |
+| 会话目录随实体数无限增长 | 低 | `SessionStore#delete(sessionId)` 提供彻底清理；0.1 不做保留期策略（PRD 未要求），运维可按需清理 `sessions/` 下闲置目录 |
 | API key 泄漏路径 | 高 | 输出/日志/网络包三处白名单审查（§3.5 + WP-8 验收） |
 | 示例 addon 独立模块拖慢构建 | 低 | 提供 P0 替代（testmod 模拟），文档记录 |
 | 26.1 GameTest 框架重构（无 `@GameTest`，函数注册受限） | 中 | WP-1 已实测并记录（§8 决策 10）；**已裁决规避：验收断言一律改由 JUnit 单测承担（§3.8）**，GameTest 降级为启动冒烟 |

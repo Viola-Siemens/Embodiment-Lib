@@ -4,6 +4,7 @@ import com.hexagram2021.embodimentlib.attach.AgentLifecycle;
 import com.hexagram2021.embodimentlib.attach.AttachmentTypes;
 import com.hexagram2021.embodimentlib.config.EmbodimentConfig;
 import com.hexagram2021.embodimentlib.gametest.ConfigGameTests;
+import com.hexagram2021.embodimentlib.memory.SessionLifecycle;
 import com.hexagram2021.embodimentlib.tool.action.FollowService;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -45,6 +46,8 @@ public final class EmbodimentLib {
 		AgentLifecycle.register();
 		// WP-7：持续跟随工具的状态清理（唯一带持久副作用的工具，见 FollowService）
 		FollowService.register();
+		// WP-4：会话持久化的保存时机（实体消失 → 写盘并摘缓存；存档/停服 → flushAll）
+		SessionLifecycle.register();
 
 		modEventBus.addListener(this::onConfigLoading);
 		modEventBus.addListener(this::onRegisterGameTests);
