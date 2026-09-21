@@ -1,10 +1,10 @@
 package com.hexagram2021.embodimentlib.tool;
 
+import org.jspecify.annotations.Nullable;
+
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-
-import org.jspecify.annotations.Nullable;
 
 /**
  * 工具调用的纯逻辑：参数解析与 observation 规约（PLAN WP-5 ①/②的可测部分）。

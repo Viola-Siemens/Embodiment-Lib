@@ -1,8 +1,5 @@
 package com.hexagram2021.embodimentlib.tool.action;
 
-import java.util.List;
-import java.util.Map;
-
 import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
 import com.hexagram2021.embodimentlib.tool.ToolContext;
 import com.hexagram2021.embodimentlib.tool.ToolResults;
@@ -10,6 +7,9 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 内置工具 {@code action.use_item}（PLAN WP-6 #13，PRD §4.5 #13）。

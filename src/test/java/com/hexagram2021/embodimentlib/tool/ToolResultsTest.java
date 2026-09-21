@@ -1,18 +1,14 @@
 package com.hexagram2021.embodimentlib.tool;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-
+import com.google.common.collect.Lists;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * {@link ToolResults} 的单测：工具契约中与实体无关的全部纯逻辑。
@@ -150,7 +146,7 @@ class ToolResultsTest {
 		@Test
 		@DisplayName("required 列表被防御性拷贝：改动入参不影响已建 schema")
 		void objectSchemaCopiesRequired() {
-			List<String> required = new ArrayList<>(List.of("a"));
+			List<String> required = Lists.newArrayList(List.of("a"));
 			Map<String, Object> schema = ToolResults.objectSchema(Map.of(), required);
 			required.add("b");
 			assertEquals(List.of("a"), schema.get("required"));
@@ -168,7 +164,7 @@ class ToolResultsTest {
 		@Test
 		@DisplayName("enumProp 带允许取值，且做拷贝")
 		void enumPropIncludesAllowedValues() {
-			List<String> allowed = new ArrayList<>(List.of("main_hand"));
+			List<String> allowed = Lists.newArrayList(List.of("main_hand"));
 			Map<String, Object> prop = ToolResults.enumProp("which hand", allowed);
 			allowed.add("off_hand");
 			assertEquals(List.of("main_hand"), prop.get("enum"));

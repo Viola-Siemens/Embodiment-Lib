@@ -1,11 +1,11 @@
 package com.hexagram2021.embodimentlib.tool.loco;
 
-import java.util.List;
-import java.util.Map;
-
 import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
 import com.hexagram2021.embodimentlib.tool.ToolContext;
 import com.hexagram2021.embodimentlib.tool.ToolResults;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 内置工具 {@code loco.jump}（PLAN WP-6 #9，PRD §4.5 #9）。

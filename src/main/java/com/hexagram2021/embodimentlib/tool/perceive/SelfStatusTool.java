@@ -1,8 +1,5 @@
 package com.hexagram2021.embodimentlib.tool.perceive;
 
-import java.util.List;
-import java.util.Map;
-
 import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
 import com.hexagram2021.embodimentlib.tool.ToolContext;
 import com.hexagram2021.embodimentlib.tool.ToolResults;
@@ -12,6 +9,9 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 内置工具 {@code perceive.self_status}（PLAN WP-6 #6，PRD §4.5 #6）。

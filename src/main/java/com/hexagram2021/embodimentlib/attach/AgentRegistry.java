@@ -1,6 +1,7 @@
 package com.hexagram2021.embodimentlib.attach;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -37,7 +38,7 @@ public final class AgentRegistry {
 	private static final Logger LOGGER = LoggerFactory.getLogger("embodimentlib.registry");
 
 	private final AgentHostSide side;
-	private final Map<String, RegistryEntry> bySession = new ConcurrentHashMap<>();
+	private final Map<String, RegistryEntry> bySession = Maps.newConcurrentMap();
 
 	private AgentRegistry(AgentHostSide side) {
 		this.side = side;

@@ -10,10 +10,12 @@ import java.util.Locale;
  * 世界交互面（扫描 {@code BlockPos} 范围、读 {@code BlockState}、取注册表键）
  * 在 {@link NearestBlockTool} 中完成；本类负责<b>最值得测</b>的三件事：
  * <ul>
- *   <li>参数合法性判定（block id / radius 的边界）；</li>
+ *   <li>radius 的边界判定；</li>
  *   <li>在候选命中集合中选出最近的（点到点距离）；</li>
  *   <li>observation 文本规约（含 {@code "not found"} / {@code "invalid ..."} 形态）。</li>
  * </ul>
+ * block id 的合法性判定（含 {@code "invalid block id"}）由 {@link ResourceId} 统一提供——
+ * 该规则被多个感知类工具共用，故不再在本类重复实现。
  *
  * <h2>契约</h2>
  * 输入 {@code block} 是<b>完整资源标识符</b>（可带命名空间，如 {@code "minecraft:iron_ore"}；
@@ -42,34 +44,6 @@ public final class NearestBlockLogic {
 	}
 
 	private NearestBlockLogic() {
-	}
-
-	/**
-	 * 校验 block id 是否为合法资源标识符（{@code "minecraft:iron_ore"} 或 {@code "iron_ore"}）。
-	 * <p>
-	 * 规则镜像 Minecraft {@code Identifier.tryParse}：可带 {@code namespace:path} 前缀；
-	 * 路径字符 {@code [a-z0-9/._-]}，命名空间字符 {@code [a-z0-9._-]} 且不得为 {@code ".."}。
-	 * 与游戏内解析保持一致，避免「纯逻辑层放行、世界侧却解析失败」的分叉。
-	 *
-	 * @param blockId 模型给的 block id（如 {@code "minecraft:iron_ore"}）
-	 * @return 合法返回 true
-	 */
-	public static boolean isValidBlockId(@Nullable String blockId) {
-		if (blockId == null || blockId.isBlank()) {
-			return false;
-		}
-		String trimmed = blockId.strip();
-		int colon = trimmed.indexOf(':');
-		// 不允许出现多个冒号（"a:b:c" 不是合法 Identifier）。
-		if (trimmed.indexOf(':', colon + 1) >= 0) {
-			return false;
-		}
-		if (colon >= 0) {
-			String namespace = trimmed.substring(0, colon);
-			String path = trimmed.substring(colon + 1);
-			return isValidNamespace(namespace) && isValidPath(path);
-		}
-		return isValidPath(trimmed);
 	}
 
 	/**
@@ -135,17 +109,6 @@ public final class NearestBlockLogic {
 	}
 
 	/**
-	 * 取资源标识符的路径部分（{@code "minecraft:iron_ore"} → {@code "iron_ore"}）。
-	 *
-	 * @param fullId 完整资源标识符
-	 * @return 路径部分
-	 */
-	public static String pathOf(String fullId) {
-		int colon = fullId.indexOf(':');
-		return colon >= 0 ? fullId.substring(colon + 1) : fullId;
-	}
-
-	/**
 	 * 把命中规约为 observation 文本：`&lt;path&gt; at (x, y, z), distance D`。
 	 *
 	 * @param hit 命中
@@ -153,7 +116,7 @@ public final class NearestBlockLogic {
 	 * @return observation 文本
 	 */
 	public static String format(BlockHit hit, double distance) {
-		return pathOf(hit.fullId()) + " at (" + hit.x() + ", " + hit.y() + ", " + hit.z()
+		return ResourceId.pathOf(hit.fullId()) + " at (" + hit.x() + ", " + hit.y() + ", " + hit.z()
 			+ "), distance " + String.format(Locale.ROOT, "%.1f", distance);
 	}
 
@@ -168,31 +131,5 @@ public final class NearestBlockLogic {
 	 */
 	public static BlockHit hit(String fullId, int x, int y, int z) {
 		return new BlockHit(fullId, x, y, z);
-	}
-
-	private static boolean isValidNamespace(String namespace) {
-		if (namespace.equals("..")) {
-			return false;
-		}
-		for (int i = 0; i < namespace.length(); i++) {
-			char c = namespace.charAt(i);
-			if (c != '_' && c != '-' && c != '.' && !(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9')) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	private static boolean isValidPath(String path) {
-		if (path.isEmpty()) {
-			return false;
-		}
-		for (int i = 0; i < path.length(); i++) {
-			char c = path.charAt(i);
-			if (c != '_' && c != '-' && c != '/' && c != '.' && !(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9')) {
-				return false;
-			}
-		}
-		return true;
 	}
 }

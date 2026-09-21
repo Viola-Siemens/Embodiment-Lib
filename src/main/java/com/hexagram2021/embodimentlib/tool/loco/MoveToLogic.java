@@ -52,6 +52,20 @@ public final class MoveToLogic {
 		if (!pathFound) {
 			return PATH_BLOCKED;
 		}
+		return distanceRemaining(distance);
+	}
+
+	/**
+	 * 规约「还差多远」文本（{@code "distance D remaining"}，D 保留 1 位小数）。
+	 * <p>
+	 * 抽成独立方法是因为 {@code loco.move_to} 与 {@code loco.move_to_entity}
+	 * 必须给出<b>逐字一致</b>的距离表述：模型会跨调用比对这两个数字来判断
+	 * 「我是不是在靠近」，格式不同会让它误判。
+	 *
+	 * @param distance 当前距离
+	 * @return observation 文本
+	 */
+	public static String distanceRemaining(double distance) {
 		return "distance " + String.format(Locale.ROOT, "%.1f", distance) + " remaining";
 	}
 }

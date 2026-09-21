@@ -1,22 +1,24 @@
 package com.hexagram2021.embodimentlib.tool;
 
-import com.hexagram2021.embodimentlib.tool.action.AttackEntityTool;
-import com.hexagram2021.embodimentlib.tool.action.MineBlockTool;
-import com.hexagram2021.embodimentlib.tool.action.UseItemTool;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.hexagram2021.embodimentlib.tool.action.*;
+import com.hexagram2021.embodimentlib.tool.container.InspectContainerTool;
+import com.hexagram2021.embodimentlib.tool.container.TransferContainerTool;
 import com.hexagram2021.embodimentlib.tool.loco.JumpTool;
 import com.hexagram2021.embodimentlib.tool.loco.LookAtTool;
+import com.hexagram2021.embodimentlib.tool.loco.MoveToEntityTool;
 import com.hexagram2021.embodimentlib.tool.loco.MoveToTool;
 import com.hexagram2021.embodimentlib.tool.meta.SayTool;
 import com.hexagram2021.embodimentlib.tool.meta.WaitTool;
-import com.hexagram2021.embodimentlib.tool.perceive.BlockStateAtTool;
-import com.hexagram2021.embodimentlib.tool.perceive.InventoryContentsTool;
-import com.hexagram2021.embodimentlib.tool.perceive.NearestBlockTool;
-import com.hexagram2021.embodimentlib.tool.perceive.SelfStatusTool;
+import com.hexagram2021.embodimentlib.tool.perceive.*;
 import io.agentscope.core.tool.AgentTool;
 import io.agentscope.core.tool.Toolkit;
 import org.jspecify.annotations.Nullable;
 
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 内置工具集工厂（PLAN WP-5 ④）。
@@ -24,18 +26,9 @@ import java.util.*;
  * 负责把内置工具装配成一个可直接交给 {@code HarnessAgent} 的 {@link Toolkit}，
  * 并提供 addon 定制入口（禁用/替换某个工具）。
  *
- * <h2>当前状态：WP-6 已注册 P0 的 12 个工具，P1 待 WP-7</h2>
- * PRD §4.5 定义了 23 个工具。WP-6 实现并注册了第一批 12 个（感知/移动/行动/元操作），
- * 见 {@link #create()}；其余 11 个（容器、放置、交互等 P1）由 WP-7 补齐。
- * <ul>
- *   <li>已注册工具：{@code perceive.nearest_block / block_state_at / inventory_contents / self_status}、
- *       {@code loco.move_to / jump / look_at}、
- *       {@code action.mine_block / use_item / attack_entity}、
- *       {@code meta.wait / say}；</li>
- *   <li>未注册（WP-7）：{@code perceive.inventory_slot / nearby_entities}、
- *       {@code loco.move_to_entity}、{@code action.place_block / use_item_on / interact_with_block / drop_item / follow_entity / stop_follow}、
- *       {@code container.inspect / transfer}。</li>
- * </ul>
+ * <h2>当前状态：PRD §4.5 的 23 个工具已全部注册（WP-6 + WP-7）</h2>
+ * {@link #create()} 装配的正是 {@link #BUILTIN_TOOL_IDS} 里的 23 个工具，
+ * 覆盖感知（6）、移动（4）、行动（9）、容器（2）、元操作（2）。
  *
  * <h2>对外契约（addon 视角）</h2>
  * 本类是内置工具的<b>装配与查询入口</b>。addon 关心的只有一个维度：
@@ -86,29 +79,41 @@ public final class BuiltinToolkit {
 	}
 
 	/**
-	 * WP-6 已实现的 12 个内置工具（ID → 实例）。
+	 * 全部内置工具（ID → 实例），按类别分组、与 {@link #BUILTIN_TOOL_IDS} 逐项对应。
 	 * <p>
 	 * {@link #create()} 与 {@link #without} 共用此清单，保证两处装配绝对一致。
-	 * WP-7 在此追加 P1 的 11 个工具。
+	 * 顺序即注册顺序（{@code LinkedHashMap}），便于按类别阅读与排查。
 	 *
 	 * @return 按注册顺序的 ID → 工具映射
 	 */
 	private static Map<String, AgentTool> builtinTools() {
-		Map<String, AgentTool> tools = new LinkedHashMap<>();
+		Map<String, AgentTool> tools = Maps.newLinkedHashMap();
 		for (AgentTool tool : List.of(
-			// perceive（WP-6 ①）：只读世界。
+			// perceive（WP-6 ① + WP-7 ④）：只读世界。
 			new NearestBlockTool(),
 			new BlockStateAtTool(),
 			new InventoryContentsTool(),
+			new InventorySlotTool(),
+			new NearbyEntitiesTool(),
 			new SelfStatusTool(),
-			// loco（WP-6 ②）：移动与朝向。
+			// loco（WP-6 ② + WP-7 ③）：移动与朝向。
 			new MoveToTool(),
+			new MoveToEntityTool(),
 			new JumpTool(),
 			new LookAtTool(),
-			// action（WP-6 ②）：世界副作用。
+			// action（WP-6 ② + WP-7 ⑤）：世界副作用。
 			new MineBlockTool(),
+			new PlaceBlockTool(),
 			new UseItemTool(),
+			new UseItemOnTool(),
+			new InteractWithBlockTool(),
 			new AttackEntityTool(),
+			new DropItemTool(),
+			new FollowEntityTool(),
+			new StopFollowTool(),
+			// container（WP-7 ⑥）：容器读写。
+			new InspectContainerTool(),
+			new TransferContainerTool(),
 			// meta（WP-6 ③）：智能体自身行为。
 			new WaitTool(),
 			new SayTool())) {
@@ -118,7 +123,7 @@ public final class BuiltinToolkit {
 	}
 
 	/**
-	 * 创建内置工具集（WP-6：P0 的 12 个工具已注册；WP-7 补齐 P1）。
+	 * 创建内置工具集：PRD §4.5 的 23 个工具全部注册。
 	 *
 	 * @return 装配好的 Toolkit；调用方可安全地继续追加自定义工具
 	 */
@@ -130,9 +135,6 @@ public final class BuiltinToolkit {
 
 	/**
 	 * 创建工具集，但排除指定的工具 ID。
-	 * <p>
-	 * 已注册的 12 个 WP-6 工具中排除；尚未实现的 ID（P1，WP-7）即使被排除也
-	 * 不会报错——它们本来就不在工具集里。
 	 *
 	 * @param excludedToolIds 要排除的工具 ID
 	 * @return 装配好的 Toolkit
@@ -195,12 +197,12 @@ public final class BuiltinToolkit {
 	 * @return 校验结果描述：全部匹配时为空列表，否则每项描述一处差异
 	 */
 	public static List<String> validateCoverage(Iterable<? extends AgentTool> tools, List<String> expectedIds) {
-		Map<String, Integer> actual = new LinkedHashMap<>();
+		Map<String, Integer> actual = Maps.newLinkedHashMap();
 		for (AgentTool tool : tools) {
 			actual.merge(tool.getName(), 1, Integer::sum);
 		}
 
-		List<String> problems = new ArrayList<>();
+		List<String> problems = Lists.newArrayList();
 		for (String id : expectedIds) {
 			Integer count = actual.remove(id);
 			if (count == null) {

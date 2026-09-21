@@ -1,9 +1,9 @@
 package com.hexagram2021.embodimentlib.api.event;
 
-import java.util.Objects;
-
 import net.minecraft.world.entity.LivingEntity;
 import net.neoforged.bus.api.Event;
+
+import java.util.Objects;
 
 /**
  * 智能体「说了一句话」事件（PLAN WP-6 ③，PRD §4.5 #23 / §4.7）。

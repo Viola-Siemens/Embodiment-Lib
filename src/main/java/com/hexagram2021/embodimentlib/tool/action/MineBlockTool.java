@@ -1,17 +1,14 @@
 package com.hexagram2021.embodimentlib.tool.action;
 
-import java.util.List;
-import java.util.Map;
-
-import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
-import com.hexagram2021.embodimentlib.tool.Griefing;
-import com.hexagram2021.embodimentlib.tool.ToolContext;
-import com.hexagram2021.embodimentlib.tool.ToolResults;
+import com.hexagram2021.embodimentlib.tool.*;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 内置工具 {@code action.mine_block}（PLAN WP-6 #11，PRD §4.5 #11）。
@@ -65,7 +62,7 @@ public final class MineBlockTool extends EmbodiedToolBase {
 
 		Level level = ctx.level();
 		BlockPos pos = new BlockPos(x, y, z);
-		if (!level.isLoaded(pos) || y < level.getMinY() || y > level.getMaxY()) {
+		if (!Blocks.isWritable(level, pos)) {
 			return OUT_OF_WORLD;
 		}
 

@@ -1,9 +1,5 @@
 package com.hexagram2021.embodimentlib.tool.action;
 
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
 import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
 import com.hexagram2021.embodimentlib.tool.Griefing;
 import com.hexagram2021.embodimentlib.tool.ToolContext;
@@ -12,6 +8,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * 内置工具 {@code action.attack_entity}（PLAN WP-6 #16，PRD §4.5 #16）。

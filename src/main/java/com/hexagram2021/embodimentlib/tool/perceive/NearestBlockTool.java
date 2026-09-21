@@ -1,9 +1,6 @@
 package com.hexagram2021.embodimentlib.tool.perceive;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-
+import com.google.common.collect.Lists;
 import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
 import com.hexagram2021.embodimentlib.tool.ToolContext;
 import com.hexagram2021.embodimentlib.tool.ToolResults;
@@ -13,12 +10,15 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 
+import java.util.List;
+import java.util.Map;
+
 /**
  * 内置工具 {@code perceive.nearest_block}（PLAN WP-6 #1，PRD §4.5 #1）。
  * <p>
  * 在绑定实体周围 {radius} 格内扫描指定类型方块，返回最近的一个。
- * 纯逻辑（id 校验、距离计算、文本规约）见 {@link NearestBlockLogic}，本类只做
- * <b>世界侧适配</b>：方块 id → 注册表查询、范围扫描、状态识别。
+ * 纯逻辑（id 校验、距离计算、文本规约）见 {@link NearestBlockLogic} 与 {@link ResourceId}，
+ * 本类只做<b>世界侧适配</b>：方块 id → 注册表查询、范围扫描、状态识别。
  *
  * <h2>线程</h2>
  * {@code run} 由基类保证在游戏线程执行，可直接读 {@link Level#getBlockState}。
@@ -51,7 +51,7 @@ public final class NearestBlockTool extends EmbodiedToolBase {
 	@Override
 	public String run(ToolContext ctx, Map<String, Object> input) {
 		String blockId = ToolResults.stringParam(input, "block", "");
-		if (!NearestBlockLogic.isValidBlockId(blockId)) {
+		if (!ResourceId.isValid(blockId)) {
 			return NearestBlockLogic.INVALID_BLOCK_ID;
 		}
 		int radius = ToolResults.intParam(input, "radius", NearestBlockLogic.DEFAULT_RADIUS);
@@ -73,7 +73,7 @@ public final class NearestBlockTool extends EmbodiedToolBase {
 
 		Level level = ctx.level();
 		BlockPos center = ctx.entity().blockPosition();
-		List<NearestBlockLogic.BlockHit> hits = new ArrayList<>();
+		List<NearestBlockLogic.BlockHit> hits = Lists.newArrayList();
 		BlockPos.betweenClosed(
 			center.getX() - radius, center.getY() - radius, center.getZ() - radius,
 			center.getX() + radius, center.getY() + radius, center.getZ() + radius)

@@ -4,6 +4,7 @@ import com.hexagram2021.embodimentlib.attach.AgentLifecycle;
 import com.hexagram2021.embodimentlib.attach.AttachmentTypes;
 import com.hexagram2021.embodimentlib.config.EmbodimentConfig;
 import com.hexagram2021.embodimentlib.gametest.ConfigGameTests;
+import com.hexagram2021.embodimentlib.tool.action.FollowService;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -42,6 +43,8 @@ public final class EmbodimentLib {
 		AttachmentTypes.REGISTER.register(modEventBus);
 		// WP-2：实体加入/离开世界、死亡、服务器停止的生命周期钩子（游戏事件总线）
 		AgentLifecycle.register();
+		// WP-7：持续跟随工具的状态清理（唯一带持久副作用的工具，见 FollowService）
+		FollowService.register();
 
 		modEventBus.addListener(this::onConfigLoading);
 		modEventBus.addListener(this::onRegisterGameTests);

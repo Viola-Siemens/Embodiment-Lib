@@ -1,13 +1,11 @@
 package com.hexagram2021.embodimentlib.tool;
 
-import java.util.Map;
-
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * {@link ToolPermissionChecker} 的单测（v0.1.0 PRD §4.6 addon 否决钩子）。

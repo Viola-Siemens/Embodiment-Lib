@@ -1,43 +1,19 @@
 package com.hexagram2021.embodimentlib.tool.perceive;
 
-import java.util.List;
-
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * {@link NearestBlockLogic} 的单测（PLAN WP-6 #1）。
  * <p>
- * 覆盖：block id 合法性与 Identifier 规则一致、radius 边界、最近命中选取、
- * observation 文本规约（含 {@code "not found"}）。
+ * 覆盖：radius 边界、最近命中选取、observation 文本规约（含 {@code "not found"}）。
+ * block id 的合法性规则已迁至 {@link ResourceId}，由 {@link ResourceIdTest} 覆盖。
  */
 class NearestBlockLogicTest {
-	@Test
-	@DisplayName("block id：合法形态（带/不带命名空间）被接受")
-	void acceptsValidBlockIds() {
-		assertTrue(NearestBlockLogic.isValidBlockId("minecraft:iron_ore"));
-		assertTrue(NearestBlockLogic.isValidBlockId("iron_ore"));
-		assertTrue(NearestBlockLogic.isValidBlockId("tech:deep_ore.block-2"));
-		assertTrue(NearestBlockLogic.isValidBlockId("minecraft:oak_door"));
-	}
-
-	@Test
-	@DisplayName("block id：非法形态被拒绝（空白/大写/非法字符/多冒号/空路径）")
-	void rejectsInvalidBlockIds() {
-		assertFalse(NearestBlockLogic.isValidBlockId(null));
-		assertFalse(NearestBlockLogic.isValidBlockId(""));
-		assertFalse(NearestBlockLogic.isValidBlockId("   "));
-		assertFalse(NearestBlockLogic.isValidBlockId("IronOre"));
-		assertFalse(NearestBlockLogic.isValidBlockId("minecraft:iron ore"));
-		assertFalse(NearestBlockLogic.isValidBlockId("a:b:c"));
-		assertFalse(NearestBlockLogic.isValidBlockId("minecraft:"));
-		assertFalse(NearestBlockLogic.isValidBlockId("..:stone")); // 命名空间 ".." 被 Identifier 拒绝
-	}
-
 	@Test
 	@DisplayName("radius：边界 [1, 32] 内合法，越界拒绝")
 	void radiusBounds() {
@@ -95,14 +71,6 @@ class NearestBlockLogicTest {
 		String observation = NearestBlockLogic.describe("minecraft:iron_ore", 0, 64, 0, hits);
 		assertTrue(observation.startsWith("iron_ore at (10, 64, 10), distance "), observation);
 		assertTrue(observation.endsWith("14.9"), observation);
-	}
-
-	@Test
-	@DisplayName("pathOf：取资源标识符的路径部分，缺省时原样返回")
-	void pathOfStripsNamespace() {
-		assertEquals("iron_ore", NearestBlockLogic.pathOf("minecraft:iron_ore"));
-		assertEquals("iron_ore", NearestBlockLogic.pathOf("iron_ore"));
-		assertEquals("deep_ore", NearestBlockLogic.pathOf("tech:deep_ore"));
 	}
 
 	@Test

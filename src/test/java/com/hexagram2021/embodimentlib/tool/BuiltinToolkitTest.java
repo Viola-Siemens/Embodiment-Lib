@@ -1,9 +1,6 @@
 package com.hexagram2021.embodimentlib.tool;
 
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-
+import com.google.common.collect.Lists;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.tool.AgentTool;
 import io.agentscope.core.tool.ToolCallParam;
@@ -12,17 +9,18 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * {@link BuiltinToolkit} 的单测（PRD §4.5 的 23 工具目录与装配契约）。
  * <p>
- * WP-6 实现并注册了 P0 的 12 个工具；本类验证：目录与 PRD 一致、去重与裁剪
- * 响亮失败、{@link #create()} 恰好装配这 12 个工具、覆盖度校验能抓住缺失/多余/重复。
- * WP-7 补齐 P1 的 11 个工具后，{@link #create()} 的注册数应变为 23。
+ * WP-6 实现并注册了 P0 的 12 个工具，WP-7 补齐了 P1 的 11 个；本类验证：目录与 PRD
+ * 一致、去重与裁剪响亮失败、{@link BuiltinToolkit#create()} 恰好装配 23 个工具、
+ * P1 的 11 个确实在其中、覆盖度校验能抓住缺失/多余/重复。
  */
 class BuiltinToolkitTest {
 	/** PRD §4.5 表格中的 23 个工具 ID，按目录出现顺序硬编码，作为对实现的独立复核。 */
@@ -52,20 +50,19 @@ class BuiltinToolkitTest {
 			"meta.say"
 	);
 
-	/** WP-6 实现的 P0 工具 ID（12 个），与 {@code BuiltinToolkit.create()} 注册清单一致。 */
-	private static final List<String> WP6_P0_TOOL_IDS = List.of(
-			"perceive.nearest_block",
-			"perceive.block_state_at",
-			"perceive.inventory_contents",
-			"perceive.self_status",
-			"loco.move_to",
-			"loco.jump",
-			"loco.look_at",
-			"action.mine_block",
-			"action.use_item",
-			"action.attack_entity",
-			"meta.wait",
-			"meta.say"
+	/** WP-7 补齐的 P1 工具 ID（11 个），用于确认第二批确实被装配。 */
+	private static final List<String> WP7_P1_TOOL_IDS = List.of(
+			"perceive.inventory_slot",
+			"perceive.nearby_entities",
+			"loco.move_to_entity",
+			"action.place_block",
+			"action.use_item_on",
+			"action.interact_with_block",
+			"action.drop_item",
+			"action.follow_entity",
+			"action.stop_follow",
+			"container.inspect",
+			"container.transfer"
 	);
 
 	@Test
@@ -73,7 +70,7 @@ class BuiltinToolkitTest {
 	void catalogMatchesPrdTable() {
 		assertEquals(23, BuiltinToolkit.BUILTIN_TOOL_IDS.size(), "PRD §4.5 定义 23 个工具");
 		assertEquals(PRD_TOOL_IDS_IN_ORDER.size(), BuiltinToolkit.BUILTIN_TOOL_IDS.size());
-		// 用集合比较而非列表比较：本类声明的顺序按 P0/P1 分组（便于装配），
+		// 用集合比较而非列表比较：本类声明的顺序按类别分组（便于阅读与装配），
 		// 与 PRD 表格顺序不同，两者都应成立，故只校验「内容一致」。
 		assertEquals(
 				PRD_TOOL_IDS_IN_ORDER.stream().sorted().toList(),
@@ -99,25 +96,50 @@ class BuiltinToolkitTest {
 	}
 
 	@Test
-	@DisplayName("create() 恰好装配 WP-6 的 12 个 P0 工具（无缺无多）")
-	void createRegistersWp6P0Tools() {
+	@DisplayName("create() 装配全部 23 个工具（无缺无多无重）")
+	void createRegistersWholeCatalog() {
 		Toolkit toolkit = BuiltinToolkit.create();
 		assertNotNull(toolkit);
 		List<String> names = BuiltinToolkit.toolNames(toolkit);
-		assertEquals(12, names.size(), "WP-6 应恰好注册 12 个 P0 工具");
-		assertEquals(WP6_P0_TOOL_IDS.stream().sorted().toList(), names.stream().sorted().toList(),
-				"create() 注册的工具应恰好是 WP-6 的 12 个 P0 工具");
+		assertEquals(23, names.size(), "PRD §4.5 的 23 个工具应全部注册");
+		assertEquals(BuiltinToolkit.BUILTIN_TOOL_IDS.stream().sorted().toList(),
+				names.stream().sorted().toList(),
+				"create() 注册的工具应与目录逐项一致");
 	}
 
 	@Test
-	@DisplayName("validateCoverage：create() 的装配与 WP-6 清单完全一致（自检无缺无多无重）")
-	void createCoverageMatchesWp6List() {
+	@DisplayName("create() 的装配通过 validateCoverage 自检（无缺无多无重）")
+	void createCoverageMatchesCatalog() {
 		Toolkit toolkit = BuiltinToolkit.create();
 		List<AgentTool> tools = toolkit.getToolNames().stream()
 				.map(toolkit::getTool)
 				.toList();
-		List<String> problems = BuiltinToolkit.validateCoverage(tools, WP6_P0_TOOL_IDS);
-		assertTrue(problems.isEmpty(), () -> "create() 装配应与 WP-6 清单一致: " + problems);
+		List<String> problems = BuiltinToolkit.validateCoverage(tools, BuiltinToolkit.BUILTIN_TOOL_IDS);
+		assertTrue(problems.isEmpty(), () -> "create() 装配应与目录一致: " + problems);
+	}
+
+	@Test
+	@DisplayName("create() 确实包含 WP-7 补齐的 11 个 P1 工具（逐个点名，避免漏注册）")
+	void createIncludesEveryWp7Tool() {
+		List<String> names = BuiltinToolkit.toolNames(BuiltinToolkit.create());
+		for (String id : WP7_P1_TOOL_IDS) {
+			assertTrue(names.contains(id), () -> "WP-7 的工具未注册: " + id);
+		}
+		assertEquals(11, WP7_P1_TOOL_IDS.size(), "WP-7 应补齐 11 个工具");
+	}
+
+	@Test
+	@DisplayName("create() 注册的每个工具都能按 ID 取回实例（不是空占位）")
+	void createToolsAreRetrievable() {
+		Toolkit toolkit = BuiltinToolkit.create();
+		for (String id : BuiltinToolkit.BUILTIN_TOOL_IDS) {
+			AgentTool tool = toolkit.getTool(id);
+			assertNotNull(tool, () -> "按 ID 取不到工具实例: " + id);
+			assertEquals(id, tool.getName(), () -> "工具实例名与目录不一致: " + id);
+			assertNotNull(tool.getDescription(), () -> "工具缺少给 LLM 的描述: " + id);
+			Object schema = tool.getParameters().get("type");
+			assertEquals("object", schema, () -> "工具参数根节点应为 object: " + id);
+		}
 	}
 
 	@Test
@@ -125,18 +147,18 @@ class BuiltinToolkitTest {
 	void withoutFiltersOutExcludedTools() {
 		Toolkit toolkit = BuiltinToolkit.without("action.mine_block", "meta.say");
 		List<String> names = BuiltinToolkit.toolNames(toolkit);
-		assertEquals(10, names.size(), "排除 2 个后应剩 10 个");
+		assertEquals(21, names.size(), "排除 2 个后应剩 21 个");
 		assertTrue(!names.contains("action.mine_block") && !names.contains("meta.say"),
 				"被排除的工具不得出现在结果中");
 		assertTrue(names.contains("perceive.self_status"), "未排除的工具应保留");
+		assertTrue(names.contains("container.transfer"), "P1 工具同样应保留");
 	}
 
 	@Test
-	@DisplayName("without() 排除尚未实现的 P1 工具不报错（它们本来就不在工具集里）")
-	void withoutSilentlyIgnoresNotYetImplementedIds() {
-		Toolkit toolkit = BuiltinToolkit.without("container.inspect", "perceive.nearby_entities");
-		assertEquals(12, BuiltinToolkit.toolNames(toolkit).size(),
-				"排除未实现的 ID 不影响已注册的 12 个工具");
+	@DisplayName("without() 可以裁掉整个目录（返回空工具集，供「只用自定义工具」的 addon）")
+	void withoutCanExcludeWholeCatalog() {
+		Toolkit toolkit = BuiltinToolkit.without(BuiltinToolkit.BUILTIN_TOOL_IDS.toArray(new String[0]));
+		assertTrue(BuiltinToolkit.toolNames(toolkit).isEmpty(), "全部排除后应为空");
 	}
 
 	@Test
@@ -219,6 +241,14 @@ class BuiltinToolkitTest {
 		BuiltinToolkit.registerAll(toolkit, List.of(stubTool("a.one"), stubTool("b.two")));
 		assertEquals(2, toolkit.getToolNames().size());
 		assertTrue(toolkit.getToolNames().containsAll(List.of("a.one", "b.two")));
+	}
+
+	@Test
+	@DisplayName("registerAll：空集合不报错（addon 可能动态算出空列表）")
+	void registerAllAcceptsEmpty() {
+		Toolkit toolkit = new Toolkit();
+		BuiltinToolkit.registerAll(toolkit, Lists.newArrayList());
+		assertTrue(toolkit.getToolNames().isEmpty());
 	}
 
 	/** 构造一个只用于装配测试的哑工具（不执行任何逻辑）。 */

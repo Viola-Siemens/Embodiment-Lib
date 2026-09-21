@@ -1,13 +1,13 @@
 package com.hexagram2021.embodimentlib.tool.meta;
 
-import java.util.List;
-import java.util.Map;
-
 import com.hexagram2021.embodimentlib.api.event.AgentSayEvent;
 import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
 import com.hexagram2021.embodimentlib.tool.ToolContext;
 import com.hexagram2021.embodimentlib.tool.ToolResults;
 import net.neoforged.neoforge.common.NeoForge;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 内置工具 {@code meta.say}（PLAN WP-6 #23，PRD §4.5 #23）。

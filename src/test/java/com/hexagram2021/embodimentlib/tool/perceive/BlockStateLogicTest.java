@@ -1,14 +1,12 @@
 package com.hexagram2021.embodimentlib.tool.perceive;
 
-import java.util.Map;
-import java.util.TreeMap;
-
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.util.Map;
+import java.util.TreeMap;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * {@link BlockStateLogic} 的单测（PLAN WP-6 #2）。

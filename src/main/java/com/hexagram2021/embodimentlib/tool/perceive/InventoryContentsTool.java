@@ -1,24 +1,20 @@
 package com.hexagram2021.embodimentlib.tool.perceive;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-
-import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
-import com.hexagram2021.embodimentlib.tool.ToolContext;
-import com.hexagram2021.embodimentlib.tool.ToolResults;
+import com.google.common.collect.Lists;
+import com.hexagram2021.embodimentlib.tool.*;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.Container;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import org.jspecify.annotations.Nullable;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 内置工具 {@code perceive.inventory_contents}（PLAN WP-6 #3，PRD §4.5 #3）。
  * <p>
- * 列出绑定实体的库存：槽位、物品、数量、耐久。实体没有库存（未实现
- * {@link Container}）→ {@code "inventory not supported on this entity"}。
- * 纯逻辑（槽行规约、文本拼接）见 {@link InventoryLogic}。
+ * 列出绑定实体的库存：槽位、物品、数量、耐久。实体没有库存 → {@link Slots#NO_INVENTORY}。
+ * 纯逻辑（槽行规约、文本拼接）见 {@link Slots}；容器解析见
+ * {@link Containers#inventoryOf(ToolContext)}。
  *
  * <h2>只列非空槽</h2>
  * 逐槽输出会包含大量 {@code "empty"} 噪声（玩家 36 槽、马 15 槽…），
@@ -42,11 +38,11 @@ public final class InventoryContentsTool extends EmbodiedToolBase {
 
 	@Override
 	public String run(ToolContext ctx, Map<String, Object> input) {
-		Container container = resolveContainer(ctx);
+		Container container = Containers.inventoryOf(ctx);
 		if (container == null) {
-			return InventoryLogic.NOT_SUPPORTED;
+			return Slots.NO_INVENTORY;
 		}
-		List<String> lines = new ArrayList<>();
+		List<String> lines = Lists.newArrayList();
 		int size = container.getContainerSize();
 		for (int slot = 0; slot < size; slot++) {
 			ItemStack stack = container.getItem(slot);
@@ -56,30 +52,12 @@ public final class InventoryContentsTool extends EmbodiedToolBase {
 			String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace() + ":"
 				+ BuiltInRegistries.ITEM.getKey(stack.getItem()).getPath();
 			if (stack.isDamageableItem()) {
-				lines.add(InventoryLogic.slotLineDurability(slot, itemId, stack.getCount(),
+				lines.add(Slots.lineWithDurability(slot, itemId, stack.getCount(),
 					stack.getDamageValue(), stack.getMaxDamage()));
 			} else {
-				lines.add(InventoryLogic.slotLine(slot, itemId, stack.getCount()));
+				lines.add(Slots.line(slot, itemId, stack.getCount()));
 			}
 		}
-		return InventoryLogic.join(lines);
-	}
-
-	/**
-	 * 解析实体的库存容器。
-	 * <p>
-	 * {@code Player} 的库存不是 {@code Container}（它实现 {@code ContainerUser}，库存是
-	 * {@code Inventory}），需要经 {@code getInventory()} 解包；其余实体直接看是否实现
-	 * {@code Container}（带箱子的 mob、容器矿车等）。
-	 *
-	 * @param ctx 工具上下文
-	 * @return 库存容器；实体没有库存时返回 null
-	 */
-	@Nullable
-	private static Container resolveContainer(ToolContext ctx) {
-		if (ctx.entity() instanceof Player player) {
-			return player.getInventory();
-		}
-		return ctx.entity() instanceof Container container ? container : null;
+		return Slots.join(lines);
 	}
 }

@@ -39,7 +39,7 @@
 | WP-4 | 会话与记忆持久化（session-id 维度） | §4.4, §6.4(会话) | P0 |
 | WP-5 | 工具契约与基础设施（含权限钩子、Griefing 集成）✅ | §4.5(契约), §4.6(权限), §4.9, §6.2(工具) | P0（权限钩子 P1） |
 | WP-6 | P0 内置工具（12 个）✅ | §4.5 #1,2,3,6,7,9,10,11,13,16,22,23；§5 P0 | P0 |
-| WP-7 | P1 内置工具（11 个） | §4.5 #4,5,8,12,14,15,17,18,19,20,21；§5 P1 | P1 |
+| WP-7 | P1 内置工具（11 个）✅ | §4.5 #4,5,8,12,14,15,17,18,19,20,21；§5 P1 | P1 |
 | WP-8 | 调试命令与可观测性（`/embodimentlib inspect`） | §4.7 | P0 |
 | WP-9 | 演示实体 `demo_agent`（召唤 + 端到端循环） | §4.8 | P0 |
 | WP-10 | Addon 扩展面与库分发验证（公开 API + 示例 addon） | §4.6(注册), §6.5, §6.6 | P1 |
@@ -660,6 +660,8 @@ NeoForge 已提供规范入口 `EventHooks.canEntityGrief(ServerLevel, Entity)`�
 WP-5 无法编译。真正交付的是**装配契约**：`BUILTIN_TOOL_IDS`（23 个 ID 的唯一权威清单）、
 `register`（重名拦截）、`without`（未知 ID 响亮失败）、`validateCoverage`（缺/多/重三向校验）。
 WP-6/WP-7 只需补注册循环。
+**（已闭合）**：WP-6 注册 12 个、WP-7 补齐剩余 11 个，`create()` 现装配全部 23 个工具，
+`BuiltinToolkitTest.createRegistersWholeCatalog` 以 23 断言锁死。
 
 **偏差 9：P0/P1 口径不进入公开 API。**
 原设计有 `P0_TOOL_IDS` / `P1_TOOL_IDS` 两个 public 字段，把开发分期（P0=WP-6、P1=WP-7）
@@ -754,7 +756,7 @@ public final class Griefing {
 public final class BuiltinToolkit {
     public static final List<String> BUILTIN_TOOL_IDS;   // 23 个，唯一权威清单
 
-    public static Toolkit create() { ... }               // WP-6：12 个 P0 工具；WP-7 补 P1
+    public static Toolkit create() { ... }               // WP-6+WP-7：23 个工具（12 P0 + 11 P1）
     public static Toolkit without(String... ids) { ... } // 未知 ID 抛 IAE
     public static void register(Toolkit, AgentTool) { ... }        // 重名抛 IAE
     public static void registerAll(Toolkit, Iterable) { ... }
@@ -792,8 +794,9 @@ public interface ToolPermissionChecker {
 - [x] 单测（P1）：`ToolPermissionChecker` 返回 false → 输出 `"permission denied"` 且工具体未被调用
       —— **部分达成**：组合/短路/黑名单已覆盖；**`guarded` 的放行/否决分支需非空 ctx，排入 WP-9**
 - [x] 单测：`BuiltinToolkit.create()` 注册数 == 当前已实现工具数（含 WP-6/WP-7 完成后 23）
-      —— **达成（持续跟进）**：WP-5 时 `create()` 为 0（当时实现数 0）；WP-6 完成后已改为 12，
-      `BuiltinToolkitTest.createRegistersWp6P0Tools` 断言 12；WP-7 补齐 P1 后改为 23
+      —— **达成**：WP-5 时 `create()` 为 0（当时实现数 0）；WP-6 完成后为 12；**WP-7 完成后为 23**
+      （`BuiltinToolkitTest.createRegistersWholeCatalog` 断言 23 且与 `BUILTIN_TOOL_IDS` 逐项一致，
+      `createIncludesEveryWp7Tool` 逐个点名 WP-7 的 11 个工具）
 
 **验证命令**
 ```
@@ -963,7 +966,7 @@ WP-5（基类/上下文/Griefing）。可并行推进（各工具独立）。**�
 
 ### WP-7 P1 内置工具（11 个）
 
-- **状态**：⬜
+- **状态**：✅（2026-09-18）
 - **PRD 映射**：§4.5 #4,5,8,12,14,15,17,18,19,20,21；§5 P1
 - **目标**：补齐剩余 11 个工具，使内置目录达到 23 个（PRD §4.5 全量）。
 - **范围（内）**：下列 11 个工具 + 契约 + **单测**。
@@ -973,41 +976,106 @@ WP-5（基类/上下文/Griefing）。可并行推进（各工具独立）。**�
 
 | # | ID | 类名（tool/...） | 输入 schema | 输出（observation） |
 |---|---|---|---|---|
-| 4 | `perceive.inventory_slot` | `perceive/InventorySlotTool` | `{"slot":0}` | 详细栈描述（组件/附魔/自定义名）；`"no inventory"` / `"slot empty"` |
-| 5 | `perceive.nearby_entities` | `perceive/NearbyEntitiesTool` | `{"radius":16,"type_filter":"minecraft:zombie"}` | 排序列表 `"zombie (uuid=..., dist=3.2, hp=20)"`；`type_filter` 可空 |
-| 8 | `loco.move_to_entity` | `loco/MoveToEntityTool` | `{"entity_id":"uuid","min_distance":3}` | `"in range"` / `"lost target"` / 原因；非 Mob → `"pathfinding not supported"` |
-| 12 | `action.place_block` | `action/PlaceBlockTool` | `{"hit_pos":[x,y,z],"face":"up","hand":"main"}` | `"placed"` / `"no block in hand"` / `"target occupied"` / `"out of reach"` / `Griefing.DENIED`；落点 `inside_pos = hit_pos.adjacent(face)` |
-| 14 | `action.use_item_on` | `action/UseItemOnTool` | `{"hit_pos":[x,y,z],"face":"up","hand":"main"}` | 交互结果文本（箱子打开/门切换/种作物…） |
-| 15 | `action.interact_with_block` | `action/InteractWithBlockTool` | `{"pos":[x,y,z]}` | 结果 / `"not interactable"` |
-| 17 | `action.drop_item` | `action/DropItemTool` | `{"slot":0,"count":8}` | `"dropped"` / `"slot empty"` |
-| 18 | `action.follow_entity` | `action/FollowEntityTool` | `{"entity_id":"uuid","distance":4}` | `"following"` / `"pathfinding not supported"`；开始持续跟随直到 #19 |
-| 19 | `action.stop_follow` | `action/StopFollowTool` | `{}` | `"stopped"` |
-| 20 | `container.inspect` | `container/InspectContainerTool` | `{"pos":[x,y,z]}` | 逐槽内容 / `"out of reach"` / `"not a container"`（含范围/视线检查） |
-| 21 | `container.transfer` | `container/TransferContainerTool` | `{"pos":[x,y,z],"from_slot":0,"to_slot":1,"count":16}` | `"transferred"` / `"not a container"` / `"out of reach"` / `"not enough items"`；目标位置每次显式传入 |
+| 4 | `perceive.inventory_slot` | `perceive/InventorySlotTool` | `{"slot":0}` | 详细栈描述 `"slot 3: 1x minecraft:diamond_sword (custom name \"Excalibur\"; enchantments sharpness 5; durability 250/250)"`；`"inventory not supported on this entity"` / `"slot empty"` |
+| 5 | `perceive.nearby_entities` | `perceive/NearbyEntitiesTool` | `{"radius":16,"type_filter":"minecraft:zombie"}` | 排序列表 `"zombie (uuid=..., dist=3.2, hp=20)"`；`type_filter` 可空；无命中 `"no entities found"` |
+| 8 | `loco.move_to_entity` | `loco/MoveToEntityTool` | `{"entity_id":"uuid","min_distance":3}` | `"in range"` / `"lost target"` / `"path blocked"` / `"distance D remaining"`；非 Mob → `"pathfinding not supported"` |
+| 12 | `action.place_block` | `action/PlaceBlockTool` | `{"hit_pos":[x,y,z],"face":"up","hand":"main"}` | `"placed"` / `"no block in hand"` / `"target occupied"` / `"out of reach"` / `"target out of world"` / `Griefing.DENIED`；落点 `inside_pos = hit_pos.relative(face)` |
+| 14 | `action.use_item_on` | `action/UseItemOnTool` | `{"hit_pos":[x,y,z],"face":"up","hand":"main"}` | `"used <item> on <block>"` / `"interacted"` / `"no effect"` / `"interaction failed"`；非玩家身体 → `"interaction requires a player body"` |
+| 15 | `action.interact_with_block` | `action/InteractWithBlockTool` | `{"pos":[x,y,z]}` | `"interacted"` / `"not interactable"` / `"interaction failed"` / `"interaction requires a player body"` |
+| 17 | `action.drop_item` | `action/DropItemTool` | `{"slot":0,"count":8}` | `"dropped"` / `"slot empty"`；`count` 缺省整叠、超过现有量按现有量截断 |
+| 18 | `action.follow_entity` | `action/FollowEntityTool` | `{"entity_id":"uuid","distance":4}` | `"following"` / `"lost target"` / `"pathfinding not supported"`；持续跟随直到 #19 |
+| 19 | `action.stop_follow` | `action/StopFollowTool` | `{}` | `"stopped"`（幂等） |
+| 20 | `container.inspect` | `container/InspectContainerTool` | `{"pos":[x,y,z]}` | 逐槽内容 / `"container empty"` / `"out of reach"` / `"line of sight blocked"` / `"not a container"` |
+| 21 | `container.transfer` | `container/TransferContainerTool` | `{"pos":[x,y,z],"from_slot":0,"to_slot":1,"count":16,"direction":"deposit"}` | `"transferred"` / `"not a container"` / `"out of reach"` / `"not enough items"` / `"target slot occupied"`；目标位置每次显式传入 |
 
 #### 关键实现要点
-- **#12** 放置：`ItemStack.useOn` 语义简化版——检查手上有 `BlockItem`、落点可替换（`canBeReplaced`）、范围内；放置前 `Griefing.denied`。
-- **#14/#15** 交互：调用 `Block.useWithoutItem` / `useItemOn` 的等价路径（⚠️ 26.1.2 的交互 API 签名实现时核对）；#15 对无交互行为的方块返回 `"not interactable"`。
-- **#18/#19** 跟随状态：库持有 `Map<entityId, FollowTarget>`（跟随行为放 `GoalSelector` 的简单 goal 或 tick 驱动），#19 清除；跟随是持续行为，由实体 tick 驱动（注意：这是唯一带副作用的持续工具）。
-- **#20/#21** 容器：目标为 `BlockEntity` 且是 `Container`/`IInventoryHolder`；范围检查（`entity.blockPosition().closerThan(pos, 6.0)`）+ 视线检查（raycast 无遮挡）；**不开玩家式 GUI**（PRD 强调 mob 无 UI 状态）。
+
+- **基础设施抽取（本 WP 新增，供 5 个子包共用）**：`tool/Slots`（槽位文本 + 槽号/数量解析，由原 `perceive/InventoryLogic` 迁入并扩展）、`tool/Containers`（实体库存 / 方块容器解析）、`tool/Blocks`（坐标可读写与方块 id）、`tool/BlockAccess`（两种 reach 常量 + 越界文本）、`tool/BlockCoordinates`（方块坐标参数解析）、`perceive/ResourceId`（资源标识符校验）。抽取的理由：这五类判断跨 `perceive`/`action`/`container` 三个子包，放在任一子包都会逼另外两个反向依赖。
+- **#4** 单槽详情：`Containers.inventoryOf` → `Slots.validateIndex` → `DataComponents.CUSTOM_NAME` 取自定义名、`ItemStack#getTagEnchantments()` 取附魔（**按渲染文本排序**，否则哈希迭代序会让同一物品两次输出不同）、`isDamageableItem` 取耐久、`DataComponents.CONSUMABLE` 判可消耗。
+- **#5** 附近实体：`AABB.inflate(radius)` 粗筛 + `distanceTo <= radius` 精筛（原版 `getEntitiesOfClass` 只接受立方体 AABB，不精筛会报出大于 radius 的距离）；排除自身；按「距离升序 → UUID 升序」排序，保证同一世界状态输出逐字可复现。
+- **#8** 走向实体：`entity_id` → UUID → `level.getEntity(uuid)`；裁决顺序「不支持寻路 → lost target → in range → path blocked → distance remaining」，其中 `"pathfinding not supported"` / `"path blocked"` / 距离文本与 `loco.move_to` **逐字共用**（`MoveToLogic.distanceRemaining`）。
+- **#12** 放置：`Griefing` 前置 → 解析 → 坐标可读写 → 「手上有 `BlockItem` → 落点 `canBeReplaced()` → 4.5 格内」→ `level.setBlock(insidePos, block.defaultBlockState(), Block.UPDATE_ALL)` 并 `stack.shrink(1)`（**必须消耗物品**，否则模型能无限刷方块）。
+- **#14/#15** 交互：调 `BlockState#useItemOn` / `#useWithoutItem`（内部会 post NeoForge `UseItemOnBlockEvent`），**不**走 `ServerPlayerGameMode`（后者要求 `ServerPlayer`、会写统计/成就、还 post `PlayerInteractEvent`——对一个 mob 驱动的交互既不真实也不必要）。#14 完整复刻原版的空手回退链（`TryEmptyHandInteraction` → 再调 `useWithoutItem`），否则「拿错物品点门」会被误报为 no effect。
+- **#17** 掉落：`DropItemLogic.resolveCount` 规约数量（缺省整叠、超过现有量截断）→ `copyWithCount` + `shrink` + 显式 `setItem`/`setChanged` → `LivingEntity#drop(stack, false, true)`。
+- **#18/#19** 跟随：库持有 `Map<UUID, FollowGoal>`（`FollowService`）；`FollowGoal extends Goal` 声明 `MOVE|LOOK` 控制位、优先级 2（压过闲逛/看风景，不抢 0～1 的浮起/惊慌），每 tick 按距离 `moveTo(target, speed)` 或 `stop()`；`stop_follow` 幂等清除；清理挂在 `EntityLeaveLevelEvent` / `LivingDeathEvent` / `ServerStoppedEvent` 三个事件上，既清「它作为跟随者」也清「它作为目标」。
+- **#20/#21** 容器：`Containers.blockContainerAt`（`BlockEntity instanceof Container`）；距离用 PLAN 指定的 6.0；#20 额外做「眼睛 → 方块中心」的 `ClipContext.Block.OUTLINE` 射线遮挡检查；#21 的搬运量算术（整叠 / 部分 / 目标容量截断 / 物品不同 / 已满）全部下沉到纯逻辑 `TransferLogic.plan`，写入前过 `Container#canPlaceItem`。
+
+#### 偏差记录（对照 PLAN 原文）
+
+1. **#14/#15 需要 `Player` 身体（26.1.2 硬约束）**：`BlockState#useItemOn` 与 `#useWithoutItem` 都强制要求非空 `Player`（方块实现会解引用 `player.getDirection()` / `isSecondaryUseActive()` / `openMenu(...)`），而本库作用于任意 `LivingEntity`。0.1 的裁决：绑定实体是 `Player` → 走原版完整语义；否则返回 `"interaction requires a player body"`。
+   **刻意不伪造 `FakePlayer`**：那会把交互归因到一个并不存在于世界的玩家上，触发玩家侧副作用（统计、成就、菜单包、按玩家判定的领地保护），同时把 mob 的真实身份/位置/朝向/视线全部替换掉——成功与否都无从解释。两个 P1 工具的覆盖面因此受限，但语义是真的。WP-9 可评估「按方块类型走 mob 自己的原版路径」（如 `DoorBlock#setOpen(@Nullable Entity)` 本身就是 mob 可用的）。
+2. **#12 的放置是 PLAN 指定的简化版**：不复刻 `BlockItem#place`（朝向推断、多格结构、`replaceClicked` 分支），只放 `defaultBlockState()`；被点击方块本身可替换（如高草）时仍按 `hit_pos.relative(face)` 落点。代价是楼梯/告示牌类有朝向的方块落成默认朝向。
+3. **#21 增补可选参数 `direction`**：PLAN 的 schema 只有一个 `pos` 加两个槽号，「从容器搬出来」与「搬进容器」在参数上无法区分（同一个调用有两种相反解读，选错会真的搬错方向）。故增加 `direction`（`"deposit"` 默认 / `"withdraw"`）；原有四参数语义不变（`from_slot` 属来源侧、`to_slot` 属目标侧）。
+4. **#20 的视线失败有独立文本 `"line of sight blocked"`**：PLAN 把视线检查并入 `"out of reach"`（「含范围/视线检查」）。但隔着墙也回 `out of reach`，会让模型认为「再走近点就行」而反复靠近——距离根本不是问题，那是个出不来的重试循环。距离本身超出时仍返回 `"out of reach"`，PLAN 的验收项不受影响。
+5. **#20 大箱子只读半边**：双箱合并发生在玩家式访问路径（`ChestBlock#getContainer`），而本库按坐标取方块实体并刻意不开玩家式 GUI，故只读到坐标所在的半边。
+6. **#4 的「组件」只含玩家可见的几类**：PRD 要求「components, enchantments, custom name」。倒出全部组件会带十几个到几十个默认组件（`max_stack_size` / `repair_cost` / `rarity`…），既吃上下文又无助于决策，故只报告自定义名、附魔、耐久、可消耗。
+7. **#18 的状态清理挂在同一组生命周期事件上，而非写进 `AgentLifecycle`**：PLAN 措辞为「必须在 WP-2 的 unregister 路径上联动」。实现改为 `FollowService.register()` 自带的监听器（`EntityLeaveLevelEvent` / `LivingDeathEvent` / `ServerStoppedEvent`，与 `AgentLifecycle` 完全相同的事件集），效果等价；这样 `attach` 包不必反向依赖 `tool` 包（`AgentLifecycle` 无需知道某个工具的私有状态）。
+8. **`ResourceId` 刻意比原版更严：空路径判非法**：原版 `Identifier.isValidPath("")` 为 `true`，故 `"minecraft:"` 在原版是合法标识符；但它必然落成 `"not found"`（模型会以为世界真的没有这种方块，转而去改半径重试）。本库当场回 `"invalid block id"`，模型能立刻看出是拼写问题。
+9. **基础设施重构（触及 WP-6 产物）**：原 `perceive/InventoryLogic` 的槽位文本迁入 `tool/Slots`（跨 5 个工具复用），原测试 `InventoryLogicTest` 更名为 `SlotsTest` 并扩充到 9 例；`NearestBlockLogic` 的 id 校验与 `pathOf` 迁入 `perceive/ResourceId`（`ResourceIdTest` 承接原 3 个用例）。**契约与文本一字未改**，只是把共用知识收拢到一处。
+10. **`action.drop_item` 复用 `Griefing.DENIED` 表达「本端无权产生世界变更」**：掉落会生成 `ItemEntity`，客户端侧必须拒绝（`LivingEntity#drop` 在客户端是空实现，不拦就会对着「什么都没发生」回一句 `"dropped"`）。与 WP-6 的 `action.attack_entity` 同一处理，不引入新文本。
+11. **`min_distance` / `distance` 参数非法时回落默认值**：与 WP-6 的 `reach` 一致——它们是纯优化参数，为参数精度中断一次移动/跟随指令没有收益。
 
 #### 验收标准（每个工具至少一条 JUnit 单测；**世界交互部分通过桩实体/桩世界或纯函数抽取断言**，见 §3.8）
-- [ ] #4：含附魔/自定义名的栈描述正确；空槽/无库存正确
-- [ ] #5：半径过滤、type_filter 过滤、按距离排序正确
-- [ ] #8：实体移动目标收敛为 `"in range"`；目标消失 → `"lost target"`
-- [ ] #12：放置成功（断言世界方块变化）；占用/超范围/无手持/被拒四种失败文本正确
-- [ ] #14：#15：对门/箱子/耕地等真实交互断言世界变化；不可交互方块返回契约文本
-- [ ] #17：正确数量掉落；空槽 `"slot empty"`
-- [ ] #18→#19：跟随开始后实体朝目标移动；#19 后停止（断言距离变化与状态清除）
-- [ ] #20：箱子内容正确；超范围 `"out of reach"`；非容器 `"not a container"`
-- [ ] #21：库存↔容器转移正确；数量不足/超范围/非容器失败文本正确
-- [ ] 全部工具：输入校验失败返回 `"invalid input: ..."` 文本
+- [x] #4：含附魔/自定义名的栈描述正确；空槽/无库存正确
+      —— **达成**（`InventorySlotLogicTest` 7 例：无特征/多特征拼接与四类特征文本；`SlotsTest` 覆盖槽号解析与越界）；
+      真实读库存与组件枚举在 WP-9
+- [x] #5：半径过滤、type_filter 过滤、按距离排序正确
+      —— **部分达成**（`NearbyEntitiesLogicTest` 8 例：半径边界、稳定排序、单行/整表文本、血量规约）；
+      注册表比对与实体查询（`getEntitiesOfClass`）在 WP-9
+- [x] #8：实体移动目标收敛为 `"in range"`；目标消失 → `"lost target"`
+      —— **达成**（`MoveToEntityLogicTest` 7 例：四种裁决 + `min_distance` 规约 + 与 `move_to` 的文本一致性）；
+      真实寻路（`getNavigation().moveTo(Entity, speed)`）在 WP-9
+- [x] #12：放置成功（断言世界方块变化）；占用/超范围/无手持/被拒四种失败文本正确
+      —— **部分达成**（`PlaceBlockLogicTest` 6 例：四种裁决 + 优先级 + 常量；`BlockAimLogicTest` 8 例覆盖参数解析）；
+      真实落块、物品消耗与 `Griefing` 判定需真实 `ServerLevel`，排 WP-9
+- [x] #14：#15：对门/箱子/耕地等真实交互断言世界变化；不可交互方块返回契约文本
+      —— **部分达成**（`BlockInteractionLogicTest` 8 例：物品三态、空手回退链三分支、空手三态；`BlockAimLogicTest` 8 例）。
+      **真实交互受 26.1.2 `Player` 硬约束**：仅玩家身体可执行，非玩家身体返回 `"interaction requires a player body"`（偏差 1）；
+      非玩家身体上的真实交互断言排 WP-9 决策
+- [x] #17：正确数量掉落；空槽 `"slot empty"`
+      —— **部分达成**（`DropItemLogicTest` 5 例：整叠/部分/超量截断/空槽）；
+      真实掉落物生成（`LivingEntity#drop`）与槽位写回在 WP-9
+- [x] #18→#19：跟随开始后实体朝目标移动；#19 后停止（断言距离变化与状态清除）
+      —— **部分达成**（`FollowEntityLogicTest` 5 例 + `StopFollowLogicTest` 1 例：起始裁决、距离规约、幂等文本）；
+      `FollowGoal` 的实际移动、`GoalSelector` 挂载/卸载与生命周期清理需真实 `Mob`，排 WP-9
+- [x] #20：箱子内容正确；超范围 `"out of reach"`；非容器 `"not a container"`
+      —— **部分达成**（`InspectContainerLogicTest` 6 例：三项前置检查 + 优先级）；
+      真实读容器、射线遮挡与双箱行为在 WP-9
+- [x] #21：库存↔容器转移正确；数量不足/超范围/非容器失败文本正确
+      —— **部分达成**（`TransferLogicTest` 11 例：搬运量算术与全部拒绝分支）；
+      真实槽位读写与 `canPlaceItem` 交互在 WP-9
+- [x] 全部工具：输入校验失败返回 `"invalid input: ..."` 文本
+      —— **达成**（`BlockCoordinatesTest` 7 例、`SlotsTest` 9 例、`BlockAimLogicTest` 8 例、
+      `TransferLogicTest` 的 direction 用例，加上各工具 run 的前置校验与基类 `executeSafely` 兜底）
+
+**验证命令**
+```
+.\gradlew.bat test --tests "com.hexagram2021.embodimentlib.tool.*"
+```
+**实测结果**：全量 `.\gradlew.bat test --rerun-tasks` 为 **313 例 0 失败**（基线 222 + WP-7 净增 91）：
+`BlockCoordinatesTest` 7、`BlockAccessTest` 3、`SlotsTest` 9、`ResourceIdTest` 5、`InventorySlotLogicTest` 7、
+`NearbyEntitiesLogicTest` 8、`MoveToEntityLogicTest` 7、`BlockAimLogicTest` 8、`PlaceBlockLogicTest` 6、
+`BlockInteractionLogicTest` 8、`DropItemLogicTest` 5、`FollowEntityLogicTest` 5、`StopFollowLogicTest` 1、
+`InspectContainerLogicTest` 6、`TransferLogicTest` 11、`BuiltinToolkitTest` 16→19；
+另有 `NearestBlockLogicTest` 9→6（3 例迁往 `ResourceIdTest`）、`InventoryLogicTest` 5→`SlotsTest` 9。
+`tool` 包小计 **174 例**（原 103 + 净增 71）。
+
+**变异测试（证明断言非空转）**：注入 4 个变异，全部被捕获（共 8 例失败）——
+1. `TransferLogic.plan` 去掉目标容量截断（`Math.min(wanted, space)` → `wanted`）→ **1 例失败**；
+2. `NearbyEntitiesLogic.formatHealth` 整数分支改为总输出一位小数 → **3 例失败**；
+3. `BlockAimLogic.parseFace` 把非法朝向回落为 `up` → **2 例失败**；
+4. `PlaceBlockLogic.decide` 把 `TARGET_OCCUPIED` 改为 `OUT_OF_REACH`（破坏判定优先级）→ **2 例失败**。
+全部还原并复验全绿。
 
 #### 前置依赖
-WP-5、WP-6（可复用 #7 的寻路封装）。
+WP-5、WP-6（可复用 #7 的寻路封装）。**已完成**。
 
 #### 风险 / 备注
-- #18 的持续跟随是工具中唯一「有状态副作用」的，状态归属与清理（实体死亡/卸载）必须在 WP-2 的 unregister 路径上联动。
+- **#18 的持续跟随是唯一「有状态副作用」的工具**：状态归属与清理见偏差 7；清理覆盖「实体离开世界/死亡」与「服务器停止」三条路径，其中「服务器停止」是单人存档切换世界时防止 UUID 串场的关键。
+- **#14/#15 的覆盖面受 26.1.2 API 约束**（偏差 1）：非玩家身体拿不到方块交互。这是本 WP 最大的功能缺口，已在验收项中如实标注；WP-9 需就「是否为 mob 增加按方块类型的原版路径」做出决策。
+- **已知缺口（全部排 WP-9 端到端，符合 §8 决策 18）**：真实读库存/组件枚举、实体范围查询与注册表比对、真实寻路、真实落块与物品消耗、真实方块交互、真实掉落物生成、跟随 goal 的实际移动与生命周期清理、真实读容器与射线遮挡、真实槽位读写。
+  这些都需要真实 `LivingEntity`/`Mob`/`ServerLevel`，纯 JUnit 无法构造；测试已覆盖可纯函数化的全部裁决与文本。
+- **`PlaceBlockTool` 直接 `setBlock` 不 post 放置事件**：0.1 走 `Griefing`（`EventHooks.canEntityGrief`）+ 直接写方块，未 post `BlockEvent.EntityPlaceEvent`。需要拦截放置的 addon 应使用 WP-5 的 `ToolPermissionChecker`（PRD §4.6 指明的扩展点）。
 
 ---
 
@@ -1179,7 +1247,7 @@ WP-0（基线）✅
  ├─► WP-1（配置）✅ ──► WP-2（附着/注册表）✅ ──► WP-3（运行时）✅
  │                    │                        ▲
  │                    └────────► WP-4（会话）──┤
- ├─► WP-5（工具契约）──► WP-6（P0 工具）──► WP-7（P1 工具）
+ ├─► WP-5（工具契约）✅ ──► WP-6（P0 工具）✅ ──► WP-7（P1 工具）✅
  │                     │   ▲                  ▲
  │                     │   └──(并行推进)──────┘
  ├─► WP-8（命令：依赖 2/3/4/6）
@@ -1193,10 +1261,10 @@ WP-0（基线）✅
 |---|---|---|
 | Phase 0（基线） | WP-0 ✅ | 可构建 + 可发布 + jarjar 生效 |
 | Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 ✅ → WP-6 ✅ → WP-2 ✅ → WP-3 ✅ → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
-| Phase 2（记忆 + P1） | WP-4（可并入 Phase 1 末）、WP-7、WP-5 权限钩子 ✅ | 23 工具全量 + 双环 + 会话持久化 |
+| Phase 2（记忆 + P1） | WP-4（可并入 Phase 1 末）、WP-7 ✅、WP-5 权限钩子 ✅ | 23 工具全量 ✅ + 双环 + 会话持久化 |
 | Phase 3（扩展与分发） | WP-10 | 示例 addon 可编译消费库 |
 
-> 并行建议：Phase 1 中 WP-1/WP-5/WP-6 可并行（WP-6 依赖 WP-5 基类，先做 WP-5 的探针）；WP-7 与 WP-6 并行推进（同一契约）；WP-10 的门面签名可在 Phase 1 定义，实现随上游点亮。
+> 并行建议：Phase 1 中 WP-1/WP-5/WP-6 可并行（WP-6 依赖 WP-5 基类，先做 WP-5 的探针）；WP-7 与 WP-6 并行推进（同一契约）——**实际执行为串行**（WP-6 ✅ 后接 WP-7 ✅），理由是两者共用同一批纯逻辑抽取消规则，串行可避免基础设施（`Slots`/`BlockAccess` 等）在同一时间被两处改动；WP-10 的门面签名可在 Phase 1 定义，实现随上游点亮。
 
 ---
 
@@ -1207,7 +1275,7 @@ WP-0（基线）✅
 3. `runServer` 手动冒烟：`/summon embodimentlib:demo_agent` → `/embodimentlib inspect` 显示 5 类信息（无 key）→ `/embodimentlib talk` 完成「走→挖→答」（FakeModel 开关演示 + 真 key 演示各一次，记录日志）。手动验证不计入验收，仅作展示。
 4. 双端隔离抽查：CLIENT 端从未读取 `server.toml`（日志断言）；服务器聊天广播不含 key/会话；`AgentRegistry.server() != AgentRegistry.client()` 且条目不跨端可见（WP-2 单测已覆盖）。
 5. `mobGriefing=false` 时 `action.mine_block` 返回 `"griefing denied"` 且世界未变（单测覆盖）。
-6. 23 个工具全部注册成功（`BuiltinToolkit.create()` 计数 23），每个工具至少 1 条**单测**通过。
+6. 23 个工具全部注册成功（`BuiltinToolkit.create()` 计数 23 —— **已达成的单测项**：`BuiltinToolkitTest.createRegistersWholeCatalog`），每个工具至少 1 条**单测**通过。
 7. `runGameTestServer` 正常起停（exit 0），无 ERROR/FATAL——**冒烟项，不计入验收**。
 8. addon 视角：示例 addon 自定义工具/事件订阅生效（§4 WP-10 验收）。
 
@@ -1245,7 +1313,8 @@ WP-0（基线）✅
 | 15 | 模型客户端依赖位置 | **实测裁决**：`agentscope-core` / `agentscope-harness` 2.0.1 的 jar 内**不含任何** OpenAI/Anthropic 实现类（按类型名检索 0 命中）。官方把模型适配器拆为独立 artifact `agentscope-extensions-model-openai` / `-anthropic`，经 `io.agentscope.core.model.spi.ModelProvider` SPI 发现。故 `build.gradle` 增补这两个依赖并一并 `jarJar`；PLAN 原文的 `new OpenAIChatModel(baseUrl, apiKey, modelName)` 不存在（二者只有 builder） | WP-3 |
 | 16 | 同一 agent 并发 reply 的语义 | **实现裁决（用户可覆盖）**：**拒绝**（抛 `IllegalStateException("agent is busy: ...")`）而非排队。理由：排队会让命令层拿到「已受理但无反馈」的未来，玩家在聊天里看不到任何回应；显式拒绝允许 WP-8 立即回一句 `agent busy`（PLAN WP-9 ③ 原文即要求此行为）。实现用 `AtomicReference#compareAndSet`，**不用** `ReentrantLock#tryLock()`——后者对同一线程可重入，会把「tick 线程连续两次触发」误判为空闲。有非重入专项单测 | WP-3 |
 | 17 | `EntityMobGriefingEvent` 的调用方式 | **实测裁决（否决原示意代码）**：原设计 `new EntityMobGriefingEvent(entity, pos)` + `post(...).isCanceled()` + `canGrief()` **不成立**。实源码核实：① 构造器为 `EntityMobGriefingEvent(ServerLevel level, Entity entity)`，**无 BlockPos**（该事件只回答「此实体此刻能否破坏」，与坐标无关）；② `EntityEvent extends Event` 而非 `ICancellableEvent`，**不存在** `isCanceled()`；③ 唯一判据是 `canGrief()`，构造时已纳入 `GameRules.MOB_GRIEFING` 初值。故 `Griefing` **直接复用 NeoForge 规范入口 `EventHooks.canEntityGrief(ServerLevel, Entity)`**（其实现即 post + 取 `canGrief()`），NeoForge 若调整语义本库自动跟随。另：非 `ServerLevel`（客户端）一律**保守拒绝**——客户端不应产生权威世界变更（PRD §4.1.1） | WP-5/6/7 |
-| 18 | 工具的可测边界 | **实测裁决**：纯 JUnit 下 `LivingEntity` 类可加载，但 `net.minecraft.world.entity.animal.Pig` **不在测试编译类路径**，且 `LivingEntity(EntityType, Level)` 构造依赖注册表与世界对象——**单测无法构造实体**，故 `ToolContext` 无法实例化。应对：把「参数解析 / observation 规约 / schema 构造」下沉到无 Minecraft 依赖的 `ToolResults`，使工具契约的核心逻辑获得完整覆盖；实体相关分支（`isEntityUsable`/`level`/`asMob`、`Griefing` 真实判定、`guarded` 放行分支）**显式记为未闭合验收项**，排入 WP-6（真实游戏环境）与 WP-9（端到端），**不接受用 mock 糊过去** | WP-5/6/9 |
+| 18 | 工具的可测边界 | **实测裁决**：纯 JUnit 下 `LivingEntity` 类可加载，但 `net.minecraft.world.entity.animal.Pig` **不在测试编译类路径**，且 `LivingEntity(EntityType, Level)` 构造依赖注册表与世界对象——**单测无法构造实体**，故 `ToolContext` 无法实例化。应对：把「参数解析 / observation 规约 / schema 构造」下沉到无 Minecraft 依赖的 `ToolResults`（WP-6/7 进一步下沉到各工具的 `*Logic` 与 `tool/Slots`/`tool/BlockAccess`/`tool/BlockCoordinates` 等纯逻辑类），使工具契约的核心逻辑获得完整覆盖；实体相关分支（`isEntityUsable`/`level`/`asMob`、`Griefing` 真实判定、`guarded` 放行分支、真实寻路/落块/交互/掉落/容器读写/跟随移动）**显式记为未闭合验收项**，排入 WP-9（端到端），**不接受用 mock 糊过去** | WP-5/6/7/9 |
+| 19 | 方块交互 API 的 `Player` 硬约束 | **实测裁决（WP-7）**：26.1.2 的 `BlockState#useItemOn(ItemStack, Level, Player, InteractionHand, BlockHitResult)` 与 `#useWithoutItem(Level, Player, BlockHitResult)` 都**强制要求非空 `Player`**（方块实现会解引用 `player.getDirection()` / `isSecondaryUseActive()` / `openMenu(...)`），而本库作用于任意 `LivingEntity`。裁决：绑定实体是 `Player` → 走原版完整语义；否则返回 `"interaction requires a player body"`。**刻意不伪造 `FakePlayer`**——那会把交互归因到一个不存在于世界的玩家上，触发玩家侧副作用（统计/成就/菜单包/按玩家判定的领地保护），并把 mob 的真实身份与位置全部替换。WP-9 可评估「按方块类型走 mob 自己的原版路径」（如 `DoorBlock#setOpen(@Nullable Entity)`） | WP-7/9 |
 
 ## 9. 风险登记
 
@@ -1254,7 +1323,8 @@ WP-0（基线）✅
 | `agentscope-harness:2.0.1` 具体 API 与 PRD 描述有出入 | 高 | WP-0 后写探针测试；**WP-3 已按 `../Sources-26.1.2/` 实源码逐签名核对并记录 6 条偏差**（§4 WP-3 偏差 1–6、§8 决策 15）。WP-5 落码前同样先核对 `ToolBase`/`Toolkit.registerAgentTool` 签名 |
 | JarInJar 配置语法随 moddev 版本变动 | 中 | 以官方文档为准，验收检查 jar 内 `META-INF/jarjar/` |
 | 线程桥接并发缺陷（游戏线程 park / 竞态） | 高 | **已实现缓解**（WP-3）：`GameThreadExecutor` 端口 + `RecordingExecutor` 手动 drain 桩，断言「派发不含等待」（drain 前任务仍在队列且 IO 线程已在等）；`ExecutionGuard` 用 CAS 而非可重入锁（同线程重入、跨线程释放各有专项单测）；变异测试确认 3 个关键不变量断言非空转；连续 3 次 `--rerun-tasks` 全绿 |
-| 破坏性工具误伤（griefing 未拦截） | 高 | 统一走 `Griefing.denied` 助手；每个破坏性工具测试 `mobGriefing=false` 用例 |
+| 破坏性工具误伤（griefing 未拦截） | 高 | 统一走 `Griefing.denied` 助手；每个破坏性工具测试 `mobGriefing=false` 用例（WP-6 已覆盖挖掘/攻击，WP-7 已覆盖放置/交互/容器搬运的裁决文本；`mobGriefing=false` 的真实世界未变断言排 WP-9） |
+| P1 工具覆盖面受 26.1.2 API 限制（#14/#15 需 `Player` 身体） | 中 | 已在 §8 决策 19 与 WP-7 偏差 1 如实记录；非玩家身体返回 `"interaction requires a player body"` 而非假装成功；WP-9 决策是否补 mob 侧原版路径（如 `DoorBlock#setOpen`）。库的 P0 主闭环（感知/移动/挖掘/使用物品/攻击/元操作）不受影响 |
 | API key 泄漏路径 | 高 | 输出/日志/网络包三处白名单审查（§3.5 + WP-8 验收） |
 | 示例 addon 独立模块拖慢构建 | 低 | 提供 P0 替代（testmod 模拟），文档记录 |
 | 26.1 GameTest 框架重构（无 `@GameTest`，函数注册受限） | 中 | WP-1 已实测并记录（§8 决策 10）；**已裁决规避：验收断言一律改由 JUnit 单测承担（§3.8）**，GameTest 降级为启动冒烟 |

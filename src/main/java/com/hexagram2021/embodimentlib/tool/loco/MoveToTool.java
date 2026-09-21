@@ -1,13 +1,13 @@
 package com.hexagram2021.embodimentlib.tool.loco;
 
-import java.util.List;
-import java.util.Map;
-
 import com.hexagram2021.embodimentlib.tool.EmbodiedToolBase;
 import com.hexagram2021.embodimentlib.tool.ToolContext;
 import com.hexagram2021.embodimentlib.tool.ToolResults;
 import net.minecraft.world.entity.Mob;
 import org.jspecify.annotations.Nullable;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 内置工具 {@code loco.move_to}（PLAN WP-6 #7，PRD §4.5 #7）。

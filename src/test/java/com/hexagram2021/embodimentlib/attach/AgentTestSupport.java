@@ -1,13 +1,13 @@
 package com.hexagram2021.embodimentlib.attach;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.hexagram2021.embodimentlib.api.AgentHostSide;
 import net.neoforged.neoforge.attachment.AttachmentType;
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WP-2 单测用的桩集合。
@@ -38,7 +38,7 @@ final class AgentTestSupport {
 	 * @author liudongyu
 	 */
 	static final class FakeAttachmentTarget implements AttachmentTarget {
-		private final Map<AttachmentType<?>, Object> attachments = new ConcurrentHashMap<>();
+		private final Map<AttachmentType<?>, Object> attachments = Maps.newConcurrentMap();
 
 		@Override
 		public <T> void setAttachment(AttachmentType<T> type, T value) {
