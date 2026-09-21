@@ -63,15 +63,17 @@ public abstract class EmbodiedToolBase extends ToolBase {
 	 * @param readOnly 是否为只读工具（只读工具在受限执行模式下自动放行）
 	 */
 	protected EmbodiedToolBase(String name, String description, Map<String, Object> inputSchema,
-			boolean readOnly) {
-		super(ToolBase.builder()
-			.name(name)
-			.description(description)
-			.inputSchema(inputSchema)
-			.readOnly(readOnly)
-			// Minecraft 世界操作全部必须在游戏线程串行执行，不存在「并发安全」的工具。
-			// 标记为 false 让 AgentScope 不把同轮多个调用并行派发。
-			.concurrencySafe(false));
+							   boolean readOnly) {
+		super(
+				ToolBase.builder()
+						.name(name)
+						.description(description)
+						.inputSchema(inputSchema)
+						.readOnly(readOnly)
+						// Minecraft 世界操作全部必须在游戏线程串行执行，不存在「并发安全」的工具。
+						// 标记为 false 让 AgentScope 不把同轮多个调用并行派发。
+						.concurrencySafe(false)
+		);
 	}
 
 	/**

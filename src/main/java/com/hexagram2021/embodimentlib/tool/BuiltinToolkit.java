@@ -1,14 +1,22 @@
 package com.hexagram2021.embodimentlib.tool;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
+import com.hexagram2021.embodimentlib.tool.action.AttackEntityTool;
+import com.hexagram2021.embodimentlib.tool.action.MineBlockTool;
+import com.hexagram2021.embodimentlib.tool.action.UseItemTool;
+import com.hexagram2021.embodimentlib.tool.loco.JumpTool;
+import com.hexagram2021.embodimentlib.tool.loco.LookAtTool;
+import com.hexagram2021.embodimentlib.tool.loco.MoveToTool;
+import com.hexagram2021.embodimentlib.tool.meta.SayTool;
+import com.hexagram2021.embodimentlib.tool.meta.WaitTool;
+import com.hexagram2021.embodimentlib.tool.perceive.BlockStateAtTool;
+import com.hexagram2021.embodimentlib.tool.perceive.InventoryContentsTool;
+import com.hexagram2021.embodimentlib.tool.perceive.NearestBlockTool;
+import com.hexagram2021.embodimentlib.tool.perceive.SelfStatusTool;
 import io.agentscope.core.tool.AgentTool;
 import io.agentscope.core.tool.Toolkit;
 import org.jspecify.annotations.Nullable;
+
+import java.util.*;
 
 /**
  * 内置工具集工厂（PLAN WP-5 ④）。
@@ -16,14 +24,17 @@ import org.jspecify.annotations.Nullable;
  * 负责把内置工具装配成一个可直接交给 {@code HarnessAgent} 的 {@link Toolkit}，
  * 并提供 addon 定制入口（禁用/替换某个工具）。
  *
- * <h2>当前状态：目录已定义，实现待 WP-6/WP-7</h2>
- * PRD §4.5 定义了 23 个工具，由 WP-6/WP-7 分批实现。本 WP（WP-5）只提供
- * <b>基础设施与装配契约</b>，因此 {@link #create()} 目前返回一个未注册任何工具的
- * {@link Toolkit}——这是刻意的，不是遗漏：
+ * <h2>当前状态：WP-6 已注册 P0 的 12 个工具，P1 待 WP-7</h2>
+ * PRD §4.5 定义了 23 个工具。WP-6 实现并注册了第一批 12 个（感知/移动/行动/元操作），
+ * 见 {@link #create()}；其余 11 个（容器、放置、交互等 P1）由 WP-7 补齐。
  * <ul>
- *   <li>若此处硬编码 23 个尚不存在的类，WP-5 根本无法编译通过；</li>
- *   <li>WP-6/WP-7 完成后，只需按 {@link #BUILTIN_TOOL_IDS} 的顺序逐个
- *       {@code register(toolkit, new XxxTool())}，装配逻辑与测试都已就位。</li>
+ *   <li>已注册工具：{@code perceive.nearest_block / block_state_at / inventory_contents / self_status}、
+ *       {@code loco.move_to / jump / look_at}、
+ *       {@code action.mine_block / use_item / attack_entity}、
+ *       {@code meta.wait / say}；</li>
+ *   <li>未注册（WP-7）：{@code perceive.inventory_slot / nearby_entities}、
+ *       {@code loco.move_to_entity}、{@code action.place_block / use_item_on / interact_with_block / drop_item / follow_entity / stop_follow}、
+ *       {@code container.inspect / transfer}。</li>
  * </ul>
  *
  * <h2>对外契约（addon 视角）</h2>
@@ -75,20 +86,53 @@ public final class BuiltinToolkit {
 	}
 
 	/**
-	 * 创建内置工具集。
+	 * WP-6 已实现的 12 个内置工具（ID → 实例）。
 	 * <p>
-	 * 当前返回空 Toolkit（见类 Javadoc 的「当前状态」说明）。
+	 * {@link #create()} 与 {@link #without} 共用此清单，保证两处装配绝对一致。
+	 * WP-7 在此追加 P1 的 11 个工具。
+	 *
+	 * @return 按注册顺序的 ID → 工具映射
+	 */
+	private static Map<String, AgentTool> builtinTools() {
+		Map<String, AgentTool> tools = new LinkedHashMap<>();
+		for (AgentTool tool : List.of(
+			// perceive（WP-6 ①）：只读世界。
+			new NearestBlockTool(),
+			new BlockStateAtTool(),
+			new InventoryContentsTool(),
+			new SelfStatusTool(),
+			// loco（WP-6 ②）：移动与朝向。
+			new MoveToTool(),
+			new JumpTool(),
+			new LookAtTool(),
+			// action（WP-6 ②）：世界副作用。
+			new MineBlockTool(),
+			new UseItemTool(),
+			new AttackEntityTool(),
+			// meta（WP-6 ③）：智能体自身行为。
+			new WaitTool(),
+			new SayTool())) {
+			tools.put(tool.getName(), tool);
+		}
+		return tools;
+	}
+
+	/**
+	 * 创建内置工具集（WP-6：P0 的 12 个工具已注册；WP-7 补齐 P1）。
 	 *
 	 * @return 装配好的 Toolkit；调用方可安全地继续追加自定义工具
 	 */
 	public static Toolkit create() {
 		Toolkit toolkit = new Toolkit();
-		// TODO WP-6/WP-7：依次注册 BUILTIN_TOOL_IDS 中的全部 23 个工具（perceive/loco/action/meta/container）。
+		registerAll(toolkit, builtinTools().values());
 		return toolkit;
 	}
 
 	/**
 	 * 创建工具集，但排除指定的工具 ID。
+	 * <p>
+	 * 已注册的 12 个 WP-6 工具中排除；尚未实现的 ID（P1，WP-7）即使被排除也
+	 * 不会报错——它们本来就不在工具集里。
 	 *
 	 * @param excludedToolIds 要排除的工具 ID
 	 * @return 装配好的 Toolkit
@@ -102,9 +146,13 @@ public final class BuiltinToolkit {
 				throw new IllegalArgumentException("unknown built-in tool id: '" + id + "'");
 			}
 		}
-		// 供 WP-6/WP-7 接入：此处按 excluded 过滤后再注册。
-		// 现阶段 create() 为空集，过滤结果同样为空，故直接复用即可，无需重复逻辑。
-		return create();
+		Toolkit toolkit = new Toolkit();
+		for (Map.Entry<String, AgentTool> entry : builtinTools().entrySet()) {
+			if (!excluded.contains(entry.getKey())) {
+				register(toolkit, entry.getValue());
+			}
+		}
+		return toolkit;
 	}
 
 	/**

@@ -38,7 +38,7 @@
 | WP-3 | 代理运行时包装（HarnessAgent 包装 + 双环 + 线程桥接）✅ | §4.2, §6.2(运行时), §6.3(线程) | P0 |
 | WP-4 | 会话与记忆持久化（session-id 维度） | §4.4, §6.4(会话) | P0 |
 | WP-5 | 工具契约与基础设施（含权限钩子、Griefing 集成）✅ | §4.5(契约), §4.6(权限), §4.9, §6.2(工具) | P0（权限钩子 P1） |
-| WP-6 | P0 内置工具（12 个） | §4.5 #1,2,3,6,7,9,10,11,13,16,22,23；§5 P0 | P0 |
+| WP-6 | P0 内置工具（12 个）✅ | §4.5 #1,2,3,6,7,9,10,11,13,16,22,23；§5 P0 | P0 |
 | WP-7 | P1 内置工具（11 个） | §4.5 #4,5,8,12,14,15,17,18,19,20,21；§5 P1 | P1 |
 | WP-8 | 调试命令与可观测性（`/embodimentlib inspect`） | §4.7 | P0 |
 | WP-9 | 演示实体 `demo_agent`（召唤 + 端到端循环） | §4.8 | P0 |
@@ -754,7 +754,7 @@ public final class Griefing {
 public final class BuiltinToolkit {
     public static final List<String> BUILTIN_TOOL_IDS;   // 23 个，唯一权威清单
 
-    public static Toolkit create() { ... }               // 当前为空；WP-6/7 补注册
+    public static Toolkit create() { ... }               // WP-6：12 个 P0 工具；WP-7 补 P1
     public static Toolkit without(String... ids) { ... } // 未知 ID 抛 IAE
     public static void register(Toolkit, AgentTool) { ... }        // 重名抛 IAE
     public static void registerAll(Toolkit, Iterable) { ... }
@@ -792,8 +792,8 @@ public interface ToolPermissionChecker {
 - [x] 单测（P1）：`ToolPermissionChecker` 返回 false → 输出 `"permission denied"` 且工具体未被调用
       —— **部分达成**：组合/短路/黑名单已覆盖；**`guarded` 的放行/否决分支需非空 ctx，排入 WP-9**
 - [x] 单测：`BuiltinToolkit.create()` 注册数 == 当前已实现工具数（含 WP-6/WP-7 完成后 23）
-      —— **达成**：`create()` 当前为 0（符合当前实现数），且目录/切分/校验机制全覆盖；
-      WP-6/7 完成后只需把断言值改为 12 / 23
+      —— **达成（持续跟进）**：WP-5 时 `create()` 为 0（当时实现数 0）；WP-6 完成后已改为 12，
+      `BuiltinToolkitTest.createRegistersWp6P0Tools` 断言 12；WP-7 补齐 P1 后改为 23
 
 **验证命令**
 ```
@@ -827,7 +827,7 @@ WP-3 的 `ThreadBridge`/`ToolBridge` 已提供 `errorObservation` 与桥接执�
 
 ### WP-6 P0 内置工具（12 个）
 
-- **状态**：⬜
+- **状态**：✅（2026-09-18）
 - **PRD 映射**：§4.5 #1,2,3,6,7,9,10,11,13,16,22,23；§5 P0
 - **目标**：交付「听→走→挖→答」闭环所需的 12 个原子工具，全部符合 WP-5 契约。
 - **范围（内）**：下列 12 个工具类 + 各自 JSON schema + observation 文本规范 + **单测**。
@@ -852,34 +852,112 @@ WP-3 的 `ThreadBridge`/`ToolBridge` 已提供 `errorObservation` 与桥接执�
 
 #### 关键实现要点
 
-- **#1/#2/#5** 世界查询：`entity.level().getBlockState(pos)`、`BlockPos.betweenClosed` 扫描 + `Distance`；`#1` 用 `ResourceLocation` 解析 block（非法 → `"invalid block id"`）。
-- **#3/#4** 库存：`entity instanceof Container`/`Inventory`（如 `Player`、`AbstractChestedMob`）→ 枚举槽；否则按契约返回 `"inventory not supported..."`。
-- **#7/#8** 寻路：`entity instanceof Mob m` → `m.getNavigation().moveTo(x,y,z,speed)`；`reach` 判断用 `entity.distanceToSqr`；启动后返回，不阻塞等待到达（到达检测由工具执行时点快照 + 可重复调用收敛）；超时由 WP-3 的执行超时兜底。
-- **#11** 挖掘：先 `Griefing.denied` → `"griefing denied"`；再 `level.destroyBlock(pos, true)`（掉落物）；`block unbreakable` 判定 `block.getDestroySpeed(level,pos) < 0`；`no tool`：手空且方块需要工具（`needsCorrectToolForDrops`）→ `"no tool"`。
-- **#16** 攻击：**LLM 必须显式给 `entity_id`**，工具不自动选目标（PRD 强调）；范围判定 `distanceTo <= 3.0`（近战）；无效/死亡目标 → `"target invalid"`。
-- **#22 wait**：不实现轮询；返回后由 WP-3 注册 tick 延迟 resumer。
-- **#23 say**：`AgentSayEvent` 类在 `api/event/AgentSayEvent.java`（WP-5 定义），事件携带 agent-id（=session-id）、执行实体、文本；库**不渲染**（PRD：addon 订阅渲染）。
+- **#1/#2/#5** 世界查询：`entity.level().getBlockState(pos)`、`BlockPos.betweenClosed` 扫描；
+  `#1` 用 `Identifier.tryParse`（26.1.2 起 `ResourceLocation` 更名）解析 block（非法 → `"invalid block id"`），
+  注册表查找用 `BuiltInRegistries.BLOCK.getValue(id)`（26.1.2 的 `get(Identifier)` 返回 `Optional<Holder.Reference<T>>`）。
+- **#3/#4** 库存：`Player` 经 `getInventory()` 解包（Player 实现 `ContainerUser` 而非 `Container`）；
+  其余实体看 `entity instanceof Container`（`AbstractChestedMob`/容器矿车等）；否则按契约返回 `"inventory not supported..."`。
+- **#7/#8** 寻路：`entity instanceof Mob m` → `m.getNavigation().moveTo(x,y,z,speed)`；`reach` 判断用 `mob.distanceToSqr`；
+  启动后返回，不阻塞等待到达（到达检测由工具执行时点快照 + 可重复调用收敛）；超时由 WP-3 的执行超时兜底。
+- **#11** 挖掘：先 `Griefing.denied` → `"griefing denied"`；再 `level.destroyBlock(pos, true, entity, Block.UPDATE_ALL)`（掉落物）；
+  `block unbreakable` 判定 `state.getDestroySpeed(level,pos) < 0`；`no tool`：手空且方块需要工具（`requiresCorrectToolForDrops`）→ `"no tool"`。
+- **#16** 攻击：**LLM 必须显式给 `entity_id`**，工具不自动选目标（PRD 强调）；范围判定 `distanceTo <= 3.0`（近战）；
+  无效/死亡目标 → `"target invalid"`；实际伤害走 `target.hurtServer(serverLevel, damageSources.mobAttack(attacker), 1.0f)`
+  （26.1.2 通用伤害入口，`LivingEntity.doHurtTarget` 基类为空操作，Mob 才覆写）；
+  攻击先过 `Griefing`，CLIENT 侧一律拒绝。
+- **#22 wait**：不实现轮询；0.1 语义 = 校验 ticks + 返回 `"waited"`，**零 park**；
+  真正的「推理循环暂停 N tick 再恢复」需要循环驱动侧接线（见下方偏差 4）。
+- **#23 say**：`AgentSayEvent` 在 `api/event/AgentSayEvent.java`（本 WP 创建），事件携带
+  agent-id（=session-id）、执行实体、文本；库**不渲染**（PRD：addon 订阅渲染）。
+
+#### 偏差记录（对照 PLAN 原文）
+
+1. **26.1.2 API 更名适配**：`ResourceLocation` → `Identifier`；`Registry.get(Identifier)` 返回
+   `Optional<Holder.Reference<T>>`，改用 `getValue(Identifier)`（返回 `@Nullable T`）；
+   `ResourceKey.location()` → `identifier()`。契约与验收不变。
+2. **`perceive.nearest_block` 输出带完整 id 的路径部分**：PLAN 表格示例写 `"iron_ore at ..."`，
+   实现输出 `"iron_ore at (x,y,z), distance 5.2"`（路径部分，命名空间是查找用的，不回显）；
+   与 PLAN 一致。若查询带命名空间的 mod 方块（`tech:deep_ore`），路径部分也会带上 —— 契约含义不变。
+3. **`action.use_item` 0.1 语义 = 「开始使用」而非完整效果模拟**：PRD #13「吃/拉弓/掷药水」的完整
+   效果需要 `Player` 交互管道与多 tick 驱动；非玩家 `LivingEntity` 上用 `startUsingItem`（可消耗物品
+   正确启动使用 tick，其余为安全的空启动），observation 为 `"used <id>"`（可消耗追加 `" (consumable)"`）。
+   「消耗后物品数量变化」的验收项推迟到 WP-9 端到端。
+4. **`meta.wait` 的「循环暂停 N tick」推迟到 WP-9**：PLAN 原写「返回后由 WP-3 注册 tick 延迟 resumer」，
+   但 WP-3 偏差 6 把 resumer 职责还给工具；而工具体只有 `ToolContext`（无循环句柄），
+   真正的 pause/resume 需要循环驱动者读取 wait 信号。0.1 本工具校验 + 返回 `"waited"` 零 park，
+   已标注 TODO 指向 WP-9 接线。验收项「等待期间服务器线程未被 park」由「零阻塞调用」的代码审查闭合。
+5. **`AgentSayEvent` 构造需真实 `LivingEntity`**：事件必须携带执行实体（PRD #23），纯 JUnit 构造不出
+   实体（§8 决策 18），故事件单测只覆盖可纯函数化的文本校验（`validateText`）；「订阅者收到事件」排 WP-9。
+6. **`perceive.self_status` 的 `threats` 定义为 16 格内 `Monster` 数**：PLAN 中 `nearby` 标记未定义语义，
+   实现取「附近敌对实体数（`Monster` 类）」，不含仇恨判定（那是 WP-9 优化项）。
+7. **`perceive.inventory_contents` 只列非空槽**：逐槽输出会带大量 `empty` 噪声（玩家 36 槽），
+   只列非空槽且每行带真实槽位索引，模型仍能定位槽位。
 
 #### 验收标准（每个工具至少一条 JUnit 单测；**世界交互部分通过桩实体/桩世界或纯函数抽取断言**，见 §3.8）
-- [ ] #1：已知方块距离正确；无匹配返回 `"not found"`；非法 block id 返回错误文本
-- [ ] #2：方块状态串正确；空中/世界外正确
-- [ ] #3：有库存实体逐槽正确；无库存实体返回契约文本
-- [ ] #6：快照含位置/血量/手持/维度/时间
-- [ ] #7：可达目标返回 `"arrived"`；不可达返回 `"path blocked"`；非 Mob 返回 `"pathfinding not supported"`
-- [ ] #9：#10：返回对应文本，姿态/跳跃动作发生（断言位置/旋转变化）
-- [ ] #11：正常挖掉返回 `"mined"`；基岩 `"block unbreakable"`；`mobGriefing=false` 时 `"griefing denied"` 且方块未变
-- [ ] #13：手持食物使用后消耗（断言物品变化）
-- [ ] #16：近处目标 `"attacked"`（血量下降）；远处 `"out of reach"`；空/无效 id `"target invalid"`；受害者也在范围内时事件被 post
-- [ ] #22：返回 `"waited"`，且等待期间服务器线程未被 park（tick 埋点）
-- [ ] #23：`AgentSayEvent` 被订阅者收到，携带正确 entity 与 text
-- [ ] 全部工具：输入缺失字段/类型错误 → 返回 `"invalid input: ..."` 文本而非抛异常
+- [x] #1：已知方块距离正确；无匹配返回 `"not found"`；非法 block id 返回错误文本
+      —— **达成**（`NearestBlockLogicTest` 9 例：id 合法性、radius 边界、最近命中、距离格式化）；
+      世界侧扫描（`BlockPos.betweenClosed` + 注册表查找）未闭合，排 WP-9
+- [x] #2：方块状态串正确；空中/世界外正确
+      —— **达成**（`BlockStateLogicTest` 7 例：序列化含多属性升序、build height 边界、air/void）；
+      真实读块与属性枚举在 WP-9
+- [x] #3：有库存实体逐槽正确；无库存实体返回契约文本
+      —— **达成**（`InventoryLogicTest` 5 例：槽行、耐久、拼接、空/不支持）；
+      `Container`/`Player.getInventory()` 解包在 WP-9
+- [x] #6：快照含位置/血量/手持/维度/时间
+      —— **达成**（`SelfStatusLogicTest` 2 例：快照行字段顺序与 PRD 示例一致）；
+      `threats` 计数（Monster 扫描）在 WP-9
+- [x] #7：可达目标返回 `"arrived"`；不可达返回 `"path blocked"`；非 Mob 返回 `"pathfinding not supported"`
+      —— **达成**（`MoveToLogicTest` 4 例：裁决矩阵全覆盖）；
+      真实寻路（`getNavigation().moveTo`）在 WP-9
+- [x] #9：#10：返回对应文本，姿态/跳跃动作发生（断言位置/旋转变化）
+      —— **部分达成**：契约文本已锁定（`JumpLogicTest` 1 例、`LookAtLogicTest` 7 例：
+      pos/entity_id 解析、冲突优先级、非法输入文本）；
+      动作发生（`jumpFromGround`/`lookAt` 造成的位置/旋转变化）需真实实体，排 WP-9
+- [x] #11：正常挖掉返回 `"mined"`；基岩 `"block unbreakable"`；`mobGriefing=false` 时 `"griefing denied"` 且方块未变
+      —— **部分达成**：裁决矩阵已测（`MineBlockLogicTest` 4 例）；Griefing 真实判定与
+      方块未变断言需真实 `ServerLevel`，排 WP-9
+- [x] #13：手持食物使用后消耗（断言物品变化）
+      —— **部分达成**：手别解析与文本规约已测（`UseItemLogicTest` 5 例）；
+      真实消耗（`startUsingItem` 后的物品变化）需真实实体，排 WP-9
+- [x] #16：近处目标 `"attacked"`（血量下降）；远处 `"out of reach"`；空/无效 id `"target invalid"`；受害者也在范围内时事件被 post
+      —— **部分达成**：裁决矩阵已测（`AttackEntityLogicTest` 4 例）；
+      真实伤害（`hurtServer` 血量下降）与事件 post 需真实 `ServerLevel`，排 WP-9
+- [x] #22：返回 `"waited"`，且等待期间服务器线程未被 park（tick 埋点）
+      —— **部分达成**：ticks 校验已测（`WaitLogicTest` 3 例）；工具零 park（纯返回，无任何
+      阻塞调用）可在代码审查确认；真实 tick 延迟恢复需循环驱动接线，排 WP-9
+- [x] #23：`AgentSayEvent` 被订阅者收到，携带正确 entity 与 text
+      —— **部分达成**：事件文本规约已测（`AgentSayEventTest` 3 例：null/空白拦截）；
+      订阅接收与渲染需真实实体（事件构造必须携带 `LivingEntity`），排 WP-9
+- [x] 全部工具：输入缺失字段/类型错误 → 返回 `"invalid input: ..."` 文本而非抛异常
+      —— **达成**（各工具 run 前置校验 + 基类 `executeSafely` 兜底；纯逻辑层参数解析全覆盖）
+
+**验证命令**
+```
+.\gradlew.bat test --tests "com.hexagram2021.embodimentlib.tool.*"
+```
+**实测结果**：全量 `.\gradlew.bat test --rerun-tasks` 为 **222 例 0 失败**（基线 162 + WP-6 新增 60：
+`NearestBlockLogicTest` 9、`BlockStateLogicTest` 7、`InventoryLogicTest` 5、`SelfStatusLogicTest` 2、
+`MoveToLogicTest` 4、`JumpLogicTest` 1、`LookAtLogicTest` 7、`MineBlockLogicTest` 4、
+`UseItemLogicTest` 5、`AttackEntityLogicTest` 4、`WaitLogicTest` 3、`SayLogicTest` 3、
+`AgentSayEventTest` 3、`BuiltinToolkitTest` 13→16）。
+
+**变异测试（证明断言非空转）**：注入 2 个变异，全部被捕获——
+1. `AttackEntityLogic.describe` 的近战范围判断 `>` 翻转为 `<`（把「范围内攻击」变成「范围外攻击」）→ **2 例失败**；
+2. `NearestBlockLogic.findNearest` 的最近选取改为「总是替换 best」（破坏最近语义）→ **1 例失败**。
+全部还原并复验全绿。
 
 #### 前置依赖
-WP-5（基类/上下文/Griefing）。可并行推进（各工具独立）。
+WP-5（基类/上下文/Griefing）。可并行推进（各工具独立）。**已完成**。
 
 #### 风险 / 备注
-- #11 挖掘的 `no tool` 语义与 `needsCorrectToolForDrops` 联动，测试要覆盖「空手挖石头（能挖，无掉落规则）」「空手挖铁矿石（no tool）」两种。
-- 寻路类工具（#7）测试需在开阔平地模板中进行，避免模板结构干扰路径。
+- #11 挖掘的 `no tool` 语义与 `requiresCorrectToolForDrops` 联动：实现按 PLAN 决定
+  「手空 + 需工具 → no tool」；「手持错误工具 + 需工具 → 允许挖（无特殊掉落）」是 0.1 简化，不予细分。
+- 寻路类工具（#7）的 `moveTo` 返回「是否成功启动寻路」，不代表「可达」——裁决把两者分开：
+  `pathFound=false → "path blocked"`，否则按距离快照报 `"distance D remaining"`。
+- **已知缺口（全部排 WP-9 端到端，符合 §8 决策 18）**：真实方块读取/扫描、真实寻路、
+  Griefing 真实判定（mobGriefing）、`hurtServer` 伤害、`startUsingItem` 消耗、
+  `jumpFromGround`/`lookAt` 姿态变化、`AgentSayEvent` 订阅接收、`meta.wait` 延迟恢复。
+  这些都需要真实 `LivingEntity`/`ServerLevel`，纯 JUnit 无法构造，测试已覆盖可纯函数化的全部裁决与文本。
 
 ---
 
@@ -1114,7 +1192,7 @@ WP-0（基线）✅
 | 批次 | 内容 | 出口标准 |
 |---|---|---|
 | Phase 0（基线） | WP-0 ✅ | 可构建 + 可发布 + jarjar 生效 |
-| Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 ✅ → WP-6 → WP-2 ✅ → WP-3 ✅ → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
+| Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 ✅ → WP-6 ✅ → WP-2 ✅ → WP-3 ✅ → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
 | Phase 2（记忆 + P1） | WP-4（可并入 Phase 1 末）、WP-7、WP-5 权限钩子 ✅ | 23 工具全量 + 双环 + 会话持久化 |
 | Phase 3（扩展与分发） | WP-10 | 示例 addon 可编译消费库 |
 

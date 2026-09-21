@@ -20,9 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * {@link BuiltinToolkit} 的单测（PRD §4.5 的 23 工具目录与装配契约）。
  * <p>
- * 本 WP（WP-5）尚未实现任何具体工具，因此这里验证的是<b>目录与装配机制</b>：
- * 清单是否与 PRD 一致、P0/P1 切分是否正确、去重与裁剪是否会响亮失败。
- * WP-6/WP-7 落地后可在此追加「覆盖度校验」用例。
+ * WP-6 实现并注册了 P0 的 12 个工具；本类验证：目录与 PRD 一致、去重与裁剪
+ * 响亮失败、{@link #create()} 恰好装配这 12 个工具、覆盖度校验能抓住缺失/多余/重复。
+ * WP-7 补齐 P1 的 11 个工具后，{@link #create()} 的注册数应变为 23。
  */
 class BuiltinToolkitTest {
 	/** PRD §4.5 表格中的 23 个工具 ID，按目录出现顺序硬编码，作为对实现的独立复核。 */
@@ -48,6 +48,22 @@ class BuiltinToolkitTest {
 			"action.stop_follow",
 			"container.inspect",
 			"container.transfer",
+			"meta.wait",
+			"meta.say"
+	);
+
+	/** WP-6 实现的 P0 工具 ID（12 个），与 {@code BuiltinToolkit.create()} 注册清单一致。 */
+	private static final List<String> WP6_P0_TOOL_IDS = List.of(
+			"perceive.nearest_block",
+			"perceive.block_state_at",
+			"perceive.inventory_contents",
+			"perceive.self_status",
+			"loco.move_to",
+			"loco.jump",
+			"loco.look_at",
+			"action.mine_block",
+			"action.use_item",
+			"action.attack_entity",
 			"meta.wait",
 			"meta.say"
 	);
@@ -83,14 +99,44 @@ class BuiltinToolkitTest {
 	}
 
 	@Test
-	@DisplayName("create() 返回可用的空 Toolkit（WP-6/WP-7 之前不注册任何工具）")
-	void createReturnsEmptyToolkitBeforeToolImplementation() {
+	@DisplayName("create() 恰好装配 WP-6 的 12 个 P0 工具（无缺无多）")
+	void createRegistersWp6P0Tools() {
 		Toolkit toolkit = BuiltinToolkit.create();
 		assertNotNull(toolkit);
-		assertTrue(
-				toolkit.getToolNames().isEmpty(),
-				"WP-5 阶段尚未实现具体工具；此处为空是预期状态，见 BuiltinToolkit 类 Javadoc"
-		);
+		List<String> names = BuiltinToolkit.toolNames(toolkit);
+		assertEquals(12, names.size(), "WP-6 应恰好注册 12 个 P0 工具");
+		assertEquals(WP6_P0_TOOL_IDS.stream().sorted().toList(), names.stream().sorted().toList(),
+				"create() 注册的工具应恰好是 WP-6 的 12 个 P0 工具");
+	}
+
+	@Test
+	@DisplayName("validateCoverage：create() 的装配与 WP-6 清单完全一致（自检无缺无多无重）")
+	void createCoverageMatchesWp6List() {
+		Toolkit toolkit = BuiltinToolkit.create();
+		List<AgentTool> tools = toolkit.getToolNames().stream()
+				.map(toolkit::getTool)
+				.toList();
+		List<String> problems = BuiltinToolkit.validateCoverage(tools, WP6_P0_TOOL_IDS);
+		assertTrue(problems.isEmpty(), () -> "create() 装配应与 WP-6 清单一致: " + problems);
+	}
+
+	@Test
+	@DisplayName("without() 排除的工具确实不出现在结果中，其余保留")
+	void withoutFiltersOutExcludedTools() {
+		Toolkit toolkit = BuiltinToolkit.without("action.mine_block", "meta.say");
+		List<String> names = BuiltinToolkit.toolNames(toolkit);
+		assertEquals(10, names.size(), "排除 2 个后应剩 10 个");
+		assertTrue(!names.contains("action.mine_block") && !names.contains("meta.say"),
+				"被排除的工具不得出现在结果中");
+		assertTrue(names.contains("perceive.self_status"), "未排除的工具应保留");
+	}
+
+	@Test
+	@DisplayName("without() 排除尚未实现的 P1 工具不报错（它们本来就不在工具集里）")
+	void withoutSilentlyIgnoresNotYetImplementedIds() {
+		Toolkit toolkit = BuiltinToolkit.without("container.inspect", "perceive.nearby_entities");
+		assertEquals(12, BuiltinToolkit.toolNames(toolkit).size(),
+				"排除未实现的 ID 不影响已注册的 12 个工具");
 	}
 
 	@Test
