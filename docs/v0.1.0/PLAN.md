@@ -40,7 +40,7 @@
 | WP-5 | 工具契约与基础设施（含权限钩子、Griefing 集成）✅ | §4.5(契约), §4.6(权限), §4.9, §6.2(工具) | P0（权限钩子 P1） |
 | WP-6 | P0 内置工具（12 个）✅ | §4.5 #1,2,3,6,7,9,10,11,13,16,22,23；§5 P0 | P0 |
 | WP-7 | P1 内置工具（11 个）✅ | §4.5 #4,5,8,12,14,15,17,18,19,20,21；§5 P1 | P1 |
-| WP-8 | 调试命令与可观测性（`/embodimentlib inspect`） | §4.7 | P0 |
+| WP-8 | 调试命令与可观测性（`/embodimentlib inspect`）✅ | §4.7 | P0 |
 | WP-9 | 演示实体 `demo_agent`（召唤 + 端到端循环） | §4.8 | P0 |
 | WP-10 | Addon 扩展面与库分发验证（公开 API + 示例 addon） | §4.6(注册), §6.5, §6.6 | P1 |
 
@@ -1139,46 +1139,113 @@ WP-5、WP-6（可复用 #7 的寻路封装）。**已完成**。
 
 ### WP-8 调试命令与可观测性（`/embodimentlib inspect`）
 
-- **状态**：⬜
+- **状态**：✅（2026-09-18）
 - **PRD 映射**：§4.7
 - **目标**：运维/开发者可在运行中的服务器查询任意实体的 agent 状态、路由与最近行为。
-- **范围（内）**：`/embodimentlib inspect <entity>` 命令 + `/emb` 别名；输出 5 类信息（PRD §4.7）；SLF4J 日志路由。
-- **范围（外）**：热重载、远程管理、可视化面板。
+- **范围（内）**：`/embodimentlib inspect [<entity>]` 命令 + `/emb` 别名；输出 5 类信息（PRD §4.7）；SLF4J 日志路由。
+- **范围（外）**：热重载、远程管理、可视化面板；`talk` 子命令属 WP-9（演示触发器）。
 
-#### 关键设计
+#### 实现定稿：分层与文件
 
-**命令树（本计划解决的 PRD 开放决策 3）**
 ```
-/embodimentlib inspect <entity>            # 主体：检查实体 agent 状态
-/embodimentlib talk <entity> <text...>     # 演示触发器（WP-9 依赖；见 WP-9）
-/emb                                     # 别名前缀（如 /emb inspect <entity>）
+command/
+├── InspectData.java             # 纯逻辑：报告数据（含只有名字/协议/模型的 ProfileView）
+├── InspectReportBuilder.java    # 纯逻辑：报告的全部文字与截断
+├── CommandPermissions.java      # 权限判定（PermissionSet 是函数式接口，可单测）
+├── EmbodimentCommandTree.java   # 命令树装配（对命令源类型泛型化 → 别名可单测）
+└── InspectCommand.java          # 适配器：解析目标 → 读五个来源 → 组装数据 → 输出
 ```
-- 权限：`ctx.getSource().hasPermission(2)`（操作员）。
-- 注册：`RegisterCommandsEvent`（`NeoForge.EVENT_BUS`）。
-- `<entity>` 解析：选择器（`@e[...]`）/ UUID / 最近实体兜底（`@s` 或最近 10 格内附着实体，取其一并打印来源）。
 
-**输出内容（PRD §4.7 全量）**
-1. `agent-type` 与 `session-id`（从 attachment 读，未附着 → 明示 `"no agent attached"`）
-2. 该 agent-type 当前解析到的 **profile 名 + protocol + model_name**（**不打印 api_key**）
-3. 最近 N（默认 5）次工具调用：ID + 输入 + 返回 observation
-4. 截断的会话预览（前 200 字符）
-5. 当前状态：`IDLE / REASONING / WAITING_TOOL`
+**① 命令树（本计划解决的 PRD 开放决策 3）**
+```
+/embodimentlib inspect [<entity>]     # 主体：检查实体 agent 状态
+/emb inspect [<entity>]               # 别名前缀（/embodimentlib 与 /emb 注册同一批节点构造器）
+```
+- 权限：见偏差 1（26.1.2 已把整数 op 等级换成 `PermissionSet`）。
+- 注册：`RegisterCommandsEvent`（`NeoForge.EVENT_BUS`，主类构造期 `addListener`）。
+- `<entity>` 解析：`EntityArgument.entity()` 原生承担名字 / UUID / `@e[...]` 三种写法；未给参数时依次回退「命令执行者自身」→「命令源 {@value com.hexagram2021.embodimentlib.command.InspectCommand#NEAREST_SEARCH_RADIUS} 格内最近的已附着实体」，并在报告首两行注明来源。
 
-**日志**：命令执行与各 runtime 事件走 `embodimentlib.command` / `embodimentlib.runtime` logger，INFO 级。
+**② 输出内容（PRD §4.7 全量）**
+```
+=== embodimentlib inspect ===
+target: Villager(8b1c1e2a) (explicit argument)     ← 目标与来源
+side: SERVER
+agent-type: village_npc                            ← 类别 1
+session-id: 8b1c1e2a-3f4d-4a5b-8c9d-0e1f2a3b4c5d
+state: IDLE | not registered                       ← 类别 5（含「已注册但空闲」与「没注册」的区分）
+profile: quest_giver (anthropic / claude-sonnet-4-5)   ← 类别 2（无 api_key / base_url）
+tool calls (last 5):                               ← 类别 3（新的在前，可配上限）
+  1. loco.move_to in={"x":10} out=arrived
+  (no tool calls recorded)
+conversation preview: <最多 200 字符>                ← 类别 4（截断在纯逻辑层执行）
+session files: history 1024 bytes @ …/agent_state.json | not persisted yet
+```
+- 未附着实体只输出「身份两行 + `no agent attached`」：其余五类信息都无从谈起，一行说清比留一堆空字段更利于运维判断。
+- 输出只回执行者（`sendSuccess(..., false)`），不广播到全服聊天；失败用 `sendFailure` 并返回 0。
 
-**可测性**：命令逻辑拆出 `InspectReportBuilder(entity) → String`（纯函数，单测覆盖格式化），命令只做参数解析与输出。
+**③ 可测性（PLAN 要求的 `InspectReportBuilder`）**
+`InspectData`（数据）与 `InspectReportBuilder`（呈现）都是<b>零 Minecraft 依赖</b>的纯逻辑类，
+因此「报告长什么样」逐行可断言；`EmbodimentCommandTree` 对命令源类型泛型化，
+使单测能用哑 source 让真实 Brigadier 解析 `emb inspect …` 并断言别名、参数名与两个执行器。
+
+#### 偏差记录（对照 PLAN 原文）
+
+1. **权限 API 更名（26.1.2 实测）**：PLAN 写 `ctx.getSource().hasPermission(2)`。实源码核实：`CommandSourceStack` 上<b>不再有</b> `hasPermission(int)`，改为 `permissions()` 返回 `PermissionSet`；整数档位由 `PermissionLevel`（`ALL/MODERATORS/GAMEMASTERS/ADMINS/OWNERS`，id 分别为 0..4）承载，「旧权限等级 2」的等价物是 `Permissions.COMMANDS_GAMEMASTER`。语义不变（操作员二级及以上），且 `LevelBasedPermissionSet` 的等级集是<b>包含更低档</b>的，因此 `ADMIN`/`OWNER` 自然放行——三条分支（恰好二级、更高档、更低档）都有专门单测。
+2. **`conversationPreview` 提升为 `EmbodiedAgentHandle` 的接口方法**：PLAN 说 WP-3 提供会话预览，但它此前只是 `EmbodiedAgent` 的具体方法。命令层若靠 `instanceof` 取用，WP-3 的具体类型就会变成事实上的公开 API；因此把它写进句柄契约（`String conversationPreview(int maxChars)`），并同步补齐 `FakeAgent`/`RecordingHandle`/匿名桩三个测试替身。这是一次<b>接口扩展</b>，属 WP-2/3 产物的连带修改。
+3. **`HostConfig` 新增 `resolveNamedProfile`**：PLAN 要求报告展示「profile 名」+ protocol + model_name，而 `resolveProfile` 只返回 profile 值对象、丢掉了名字。新增的方法与 `resolveProfile` 共享同一条解析路径（后者改为委托），避免出现两份可能漂移的路由判定。
+4. **报告数据里没有密钥字段（结构性保证）**：`InspectData.ProfileView` 只有 `name/protocol/modelName`，`ProfileView.of` 在转换时就丢弃 `api_key` 与 `base_url`。这比「输出时记得别打印」强：报告即使想打印也无从取出。验收用例为此专门用<b>带密钥的真实 `AgentProfile`</b> 构造视图，断言报告不含 key 与 base_url。
+5. **`state` 区分「未注册」与「已注册但空闲」**：PLAN 只写「当前状态：IDLE / REASONING / WAITING_TOOL」。注册表无条目时打印 `not registered`——把「没有 agent 运行对象」显示成 `IDLE` 会误导运维去查「为什么它不动」。
+6. **工具调用默认 5 条、预览默认 200 字符**：与 PLAN 一致；两者都是显式常量并有专门用例（超限不输出、正好 200 不截断、超出加省略号）。
+7. **未给实体参数时的兜底顺序**：PLAN 写「`@s` 或最近 10 格内附着实体，取其一并打印来源」。实现为「命令执行者自身（若有）→ 附近最近已附着实体」，并把三种来源（显式参数 / 执行者自身 / 附近兜底）都打进报告首行。
 
 #### 验收标准（**全部为 JUnit 单测**，见 §3.8）
-- [ ] 单测：`InspectReportBuilder` 对附着实体输出含 5 类信息且**不含 api_key**（桩 RegistryEntry 驱动）
-- [ ] 单测：对未附着实体输出 `"no agent attached"`
-- [ ] 单测：非操作员执行被拒（权限判定抽为纯函数后单测）
-- [ ] 单测：`InspectReportBuilder` 对空注册表/有记录两种状态格式化正确
-- [ ] 单测：别名 `/emb inspect` 的命令树解析正确
+- [x] 单测：`InspectReportBuilder` 对附着实体输出含 5 类信息且**不含 api_key**（桩 RegistryEntry 驱动）
+      —— **达成**（`InspectReportBuilderTest` 12 例：整段报告 11 行逐行比对；隐私用例断言不含 key 与 base_url，
+      同时断言 protocol/model 必须出现——否则「都删掉」也能通过）
+- [x] 单测：对未附着实体输出 `"no agent attached"`
+      —— **达成**（报告仅 4 行，第 4 行为 `no agent attached`；并断言不出现 `agent-type`/`profile` 行）
+- [x] 单测：非操作员执行被拒（权限判定抽为纯函数后单测）
+      —— **达成**（`CommandPermissionsTest` 7 例：恰好二级放行、更高档放行、一级及以下拒绝、空/全集两端、并集语义；
+      `EmbodimentCommandTreeTest.permissionRequirementHidesCommand` 进一步断言「谓词不满足时命令在<b>解析期</b>就不可达」）
+- [x] 单测：`InspectReportBuilder` 对空注册表/有记录两种状态格式化正确
+      —— **达成**（空注册表：`state: not registered` + `(no tool calls recorded)` + 两处 `not persisted yet`；
+      有记录：工具调用「新的在前」逐条编号，超出上限的不输出）
+- [x] 单测：别名 `/emb inspect` 的命令树解析正确
+      —— **达成**（`EmbodimentCommandTreeTest` 7 例：两个根都注册且都有 `inspect`；
+      参数名/类型（`EntityArgument`）正确；两个分支挂<b>不同</b>执行器；
+      `emb inspect` 解析到兜底分支并执行、`embodimentlib inspect Steve` 解析到显式分支并执行；
+      `@e[...]` 与 UUID 写法都能解析）
+
+**验证命令**
+```
+.\gradlew.bat test --tests "com.hexagram2021.embodimentlib.command.*"
+```
+**实测结果**：全量 `.\gradlew.bat test --rerun-tasks` 为 **381 例 0 失败**（基线 353 + WP-8 新增 28：
+`InspectReportBuilderTest` 12、`CommandPermissionsTest` 7、`EmbodimentCommandTreeTest` 7、
+`EmbodimentConfigTest` 16→18（新增 `resolveNamedProfile` 两例））。
+`command` 包 **26 例**全部为纯 JUnit——不需要服务器、实体、注册表或配置文件。
+
+**变异测试（证明断言非空转）**：注入 4 个变异，全部被捕获（共 9 例失败）——
+1. `InspectReportBuilder.truncate` 改为直接返回原文（去掉 200 字符上限）→ **3 例失败**；
+2. `CommandPermissions.REQUIRED` 从 `COMMANDS_GAMEMASTER` 放宽为 `COMMANDS_MODERATOR`（把门槛降到一级）→ **3 例失败**；
+3. `EmbodimentCommandTree.inspectNode` 去掉 `.requires(requirement)`（任何人可执行）→ **1 例失败**；
+4. `InspectData.ProfileView.of` 把 `apiKey` 拼进模型名（模拟「顺手多打印一点」）→ **3 例失败**（含隐私硬约束用例）。
+全部还原并复验全绿。
 
 #### 前置依赖
-WP-2（attachment/registry，已合并：`AgentRegistry.server()/client()`、`RegistryEntry.state()/recentToolCalls()`）、WP-3（会话预览）、WP-4（会话）、WP-6（至少 1 个工具产生记录）。未合并时用桩 RegistryEntry 单测格式化逻辑先行。
+WP-2（attachment/registry：`AgentRegistry.server()/client()`、`RegistryEntry.state()/recentToolCalls()`）、
+WP-3（`EmbodiedAgentHandle.conversationPreview`）、WP-4（`SessionStore#hasHistory/historyPath/historySizeBytes`）、
+WP-6（至少 1 个工具产生记录）。**均已就绪**。
 
 #### 风险 / 备注
+- **隐私硬约束**（PLAN 原备注）：任何输出路径不得出现 api_key / 完整会话。0.1 的实现把这条约束做成了
+  <b>类型层面的事实</b>（`InspectData` 里没有密钥字段）加上<b>长度上限</b>（预览 200 字符）+ <b>权限门槛</b>（操作员二级），
+  三层各自有单测与变异测试兜底。
+- **命令树只覆盖 `inspect`**：`talk` 属 WP-9（演示触发器），届时在同一批节点构造器上追加，别名的注册方式保持不变。
+- **`CommandSourceStack` 上的权限行为需真实服务器复核**：单测已覆盖「谓词不满足 → 解析期不可达」与等级语义，
+  但「真实玩家的 op 等级是否映射为 `LevelBasedPermissionSet` 的对应档位」属 WP-9 端到端冒烟（`runServer` 中用非 op 玩家验证一次）。
+- **`EntityArgument` 的选择器权限**：`@e[...]` 在解析期要求 `Permissions.COMMANDS_ENTITY_SELECTORS`；
+  这是原版既有约束（非 op 玩家本来就不能用选择器），本库不做特殊处理，单测用授予该权限的哑 source 覆盖解析路径。
 - 隐私硬约束：任何输出路径不得出现 api_key / 完整会话（截断）。
 
 ---
@@ -1308,7 +1375,7 @@ WP-0（基线）✅
  ├─► WP-5（工具契约）✅ ──► WP-6（P0 工具）✅ ──► WP-7（P1 工具）✅
  │                     │   ▲                  ▲
  │                     │   └──(并行推进)──────┘
- ├─► WP-8（命令：依赖 2/3/4/6）
+ ├─► WP-8（命令：依赖 2/3/4/6）✅
  └─► WP-9（演示：依赖 2/3/6/8）
      WP-10（扩展面：依赖 0/2/3/5/6；门面接口可先行定义）
 ```
@@ -1318,7 +1385,7 @@ WP-0（基线）✅
 | 批次 | 内容 | 出口标准 |
 |---|---|---|
 | Phase 0（基线） | WP-0 ✅ | 可构建 + 可发布 + jarjar 生效 |
-| Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 ✅ → WP-6 ✅ → WP-2 ✅ → WP-3 ✅ → WP-8 → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
+| Phase 1（P0 纵切，核心交付） | WP-1 ✅ → WP-5 ✅ → WP-6 ✅ → WP-2 ✅ → WP-3 ✅ → WP-8 ✅ → WP-9 | 服务器端「召唤→说话→走→挖→答」闭环可演示（FakeModel 或真 key） |
 | Phase 2（记忆 + P1） | WP-4 ✅、WP-7 ✅、WP-5 权限钩子 ✅ | 23 工具全量 ✅ + 双环 + 会话持久化 ✅ |
 | Phase 3（扩展与分发） | WP-10 | 示例 addon 可编译消费库 |
 
@@ -1330,7 +1397,7 @@ WP-0（基线）✅
 
 1. `.\gradlew.bat build` 与 `.\gradlew.bat publish` 成功；产物 jar 含 AgentScope jarjar。
 2. **`.\gradlew.bat test` 单测全绿（0 失败）——这是唯一验收标准**（覆盖各 WP 的纯逻辑断言）。
-3. `runServer` 手动冒烟：`/summon embodimentlib:demo_agent` → `/embodimentlib inspect` 显示 5 类信息（无 key）→ `/embodimentlib talk` 完成「走→挖→答」（FakeModel 开关演示 + 真 key 演示各一次，记录日志）。手动验证不计入验收，仅作展示。
+3. `runServer` 手动冒烟：`/summon embodimentlib:demo_agent` → `/embodimentlib inspect` 显示 5 类信息（无 key）→ `/embodimentlib talk` 完成「走→挖→答」（FakeModel 开关演示 + 真 key 演示各一次，记录日志）。手动验证不计入验收，仅作展示。**（`inspect` 命令已由 WP-8 交付并单测覆盖报告格式；`talk` 与端到端跑通属 WP-9，手动冒烟仍在发布前执行。）**
 4. 双端隔离抽查：CLIENT 端从未读取 `server.toml`（日志断言）；服务器聊天广播不含 key/会话；`AgentRegistry.server() != AgentRegistry.client()` 且条目不跨端可见（WP-2 单测已覆盖）；**会话树同样分离**——客户端与会话目录不得落在世界目录下（WP-4 单测覆盖「SERVER 写入、CLIENT 读不到」，生产根的真实路径由第 3 项冒烟确认 `world/embodimentlib/sessions/` 出现）。
 5. `mobGriefing=false` 时 `action.mine_block` 返回 `"griefing denied"` 且世界未变（单测覆盖）。
 6. 23 个工具全部注册成功（`BuiltinToolkit.create()` 计数 23 —— **已达成的单测项**：`BuiltinToolkitTest.createRegistersWholeCatalog`），每个工具至少 1 条**单测**通过。
@@ -1357,7 +1424,7 @@ WP-0（基线）✅
 |---|---|---|---|
 | 1 | 精确 TOML 键名 | §4 WP-1 ② 的结构（`[default]` / `routing` / `profiles`）；**实现载体经用户裁决由 tomlj 改为 ModConfigSpec，且经 26.1 实测把 routing/profiles 从嵌套表改为 List + JSON（见决策 11）** | WP-1 |
 | 2 | NeoForge 配置屏 | **更新**：ModConfigSpec 注册天然获得配置屏，0.1 直接可用；无需自建磁盘直改 | WP-1 |
-| 3 | `/embodimentlib` 命令树 | `inspect`（§4.7 主体）+ `talk`（演示触发器）+ `/emb` 别名；其余子命令延后 | WP-8/9 |
+| 3 | `/embodimentlib` 命令树 | `inspect`（§4.7 主体，**WP-8 已交付**：`/embodimentlib inspect [<entity>]` + `/emb` 别名，权限 = 操作员二级）+ `talk`（演示触发器，WP-9）；其余子命令延后 | WP-8/9 |
 | 4 | 工具 JSON schema | 逐工具定义于 WP-6/WP-7 表格 | WP-6/7 |
 | 5 | session-id 默认值 | 实体 UUID 字符串（PRD 推荐值，直接采纳） | WP-2/4 |
 | 6 | 会话历史存储 | **实测更新（WP-4）**：原裁决「委托 AgentScope workspace，不可用则回退库自管 `history.json`」经实源码核对后**不成立**——workspace 侧的会话文件由 `MemoryFlushMiddleware` 写入，而它只在设置了 `memoryModel` 时才安装（`HarnessAgent.Builder` 第 2271 行），0.1 没有 memory 模型，那条路径根本不生效。真正默认生效的是 `AgentStateStore`：`HarnessAgent.build()` 未显式设置时会自动装 `JsonFileAgentStateStore(~/.agentscope/state/<agentId>)`，`ReActAgent` 每轮把 `AgentState`（含对话缓冲）写入 `agent_state` 键。**最终裁决**：不使用回退方案，而是把该状态存储**显式指向会话目录**（`SessionStore#openStateStore` → `<session dir>`），历史因此落在 `<session dir>/__anon__/<sessionId>/agent_state.json`；`memory.json`/`todo.json` 仍由库自管，二者同处一个会话目录。回退方案（库自管 `history.json`）**不再需要**，已被 WP-4 的单测钉住布局 | WP-3/4 |
@@ -1375,6 +1442,7 @@ WP-0（基线）✅
 | 18 | 工具的可测边界 | **实测裁决**：纯 JUnit 下 `LivingEntity` 类可加载，但 `net.minecraft.world.entity.animal.Pig` **不在测试编译类路径**，且 `LivingEntity(EntityType, Level)` 构造依赖注册表与世界对象——**单测无法构造实体**，故 `ToolContext` 无法实例化。应对：把「参数解析 / observation 规约 / schema 构造」下沉到无 Minecraft 依赖的 `ToolResults`（WP-6/7 进一步下沉到各工具的 `*Logic` 与 `tool/Slots`/`tool/BlockAccess`/`tool/BlockCoordinates` 等纯逻辑类），使工具契约的核心逻辑获得完整覆盖；实体相关分支（`isEntityUsable`/`level`/`asMob`、`Griefing` 真实判定、`guarded` 放行分支、真实寻路/落块/交互/掉落/容器读写/跟随移动）**显式记为未闭合验收项**，排入 WP-9（端到端），**不接受用 mock 糊过去** | WP-5/6/7/9 |
 | 19 | 方块交互 API 的 `Player` 硬约束 | **实测裁决（WP-7）**：26.1.2 的 `BlockState#useItemOn(ItemStack, Level, Player, InteractionHand, BlockHitResult)` 与 `#useWithoutItem(Level, Player, BlockHitResult)` 都**强制要求非空 `Player`**（方块实现会解引用 `player.getDirection()` / `isSecondaryUseActive()` / `openMenu(...)`），而本库作用于任意 `LivingEntity`。裁决：绑定实体是 `Player` → 走原版完整语义；否则返回 `"interaction requires a player body"`。**刻意不伪造 `FakePlayer`**——那会把交互归因到一个不存在于世界的玩家上，触发玩家侧副作用（统计/成就/菜单包/按玩家判定的领地保护），并把 mob 的真实身份与位置全部替换。WP-9 可评估「按方块类型走 mob 自己的原版路径」（如 `DoorBlock#setOpen(@Nullable Entity)`） | WP-7/9 |
 | 20 | session-id 的合法性与会话根目录 | **实现裁决（WP-4）**：session-id 是 addon 给的字符串（最终来自玩家/模型语境），一旦带进 `../`、绝对路径或 Windows 保留设备名，就会变成「读写别的会话甚至别的目录」。裁决：**校验后拒绝（抛 IAE），绝不清洗**——静默清洗会把 `../evil` 变成一个合法目录名，让越权写入变成无人察觉的事实。字符集取 `[A-Za-z0-9._-]{1,64}`，与 AgentScope `JsonFileAgentStateStore` 的「文件系统安全」规则**逐字相同**，因此磁盘段名 == session-id（不会出现「日志里叫 A、磁盘上叫 Base64(A)」），并额外拒绝 `.`/`..` 与 Windows 保留设备名。会话根：服务端取世界目录、客户端取配置目录，两棵树永不合并；根目录**每次调用重新解析**（单人存档切世界时 JVM 不重启，缓存旧路径会把新会话写进上一个存档），不可用时**降级**为内存态 + 一次性告警 | WP-4/9 |
+| 21 | 命令权限 API 的表示 | **实测裁决（WP-8）**：PLAN 写 `ctx.getSource().hasPermission(2)`，但 26.1.2 的 `CommandSourceStack` 上**已无** `hasPermission(int)`，改为 `permissions()` 返回 `PermissionSet`；整数 op 档位由 `PermissionLevel`（`ALL/MODERATORS/GAMEMASTERS/ADMINS/OWNERS`，id 0..4）承载。裁决：所需权限 = `Permissions.COMMANDS_GAMEMASTER`（即旧的「权限等级 2」），判定为 `permissions().hasPermission(REQUIRED)`，并抽成 `CommandPermissions` 以便单测。`LevelBasedPermissionSet` 的等级集包含更低档位，故 admin/owner 自然放行——三条分支（恰好二级 / 更高档 / 更低档）各有专门用例，阈值被钉死 | WP-8/9 |
 
 ## 9. 风险登记
 
@@ -1389,6 +1457,8 @@ WP-0（基线）✅
 | AgentScope 状态存储布局变更导致历史写到别处 | 中 | **已缓解（WP-4）**：`historyPath/hasHistory` 依赖 `<stateRoot>/__anon__/<sessionId>/agent_state.json`，该假设由单测用真实 `JsonFileAgentStateStore` 写一次后断言路径落在会话目录内——上游若改布局会**立刻红**，而不是静默改道。另：`openStateStore` 失败时返回 null 并告警，agent 仍可创建（只是不落盘） |
 | 会话文件损坏 / 落盘失败导致加载崩溃或数据丢失 | 中 | **已缓解（WP-4）**：落盘走「临时文件 + 原子改名」；读取失败（JSON 损坏、权限不足）只告警并以空数据开始（单测覆盖「memory.json 损坏而 todo.json 仍可读」）；落盘异常不向上抛，内存态仍可用 |
 | 会话目录随实体数无限增长 | 低 | `SessionStore#delete(sessionId)` 提供彻底清理；0.1 不做保留期策略（PRD 未要求），运维可按需清理 `sessions/` 下闲置目录 |
+| 调试命令泄露密钥或完整会话（`/inspect`） | 高 | **已缓解（WP-8）**：三层独立防线——① <b>类型层面</b>：`InspectData` 里没有 api_key/base_url 字段（`ProfileView` 只有名字/协议/模型名），报告无从取出；② <b>长度上限</b>：会话预览截断到 200 字符（截断在纯逻辑层执行并有单测）；③ <b>权限门槛</b>：操作员二级（`Permissions.COMMANDS_GAMEMASTER`），且输出只回执行者不广播。4 条变异测试（含「顺手把 key 拼进模型名」）全部被捕获 |
+| 命令权限判定在真实玩家上行为与预期不符 | 中 | 单测已覆盖等级语义（恰好二级放行 / 更高档放行 / 更低档拒绝）与「谓词不满足 → 解析期不可达」；「真实 op 等级映射为 `LevelBasedPermissionSet` 档位」由 WP-9 用非 op 玩家冒烟复核 |
 | API key 泄漏路径 | 高 | 输出/日志/网络包三处白名单审查（§3.5 + WP-8 验收） |
 | 示例 addon 独立模块拖慢构建 | 低 | 提供 P0 替代（testmod 模拟），文档记录 |
 | 26.1 GameTest 框架重构（无 `@GameTest`，函数注册受限） | 中 | WP-1 已实测并记录（§8 决策 10）；**已裁决规避：验收断言一律改由 JUnit 单测承担（§3.8）**，GameTest 降级为启动冒烟 |

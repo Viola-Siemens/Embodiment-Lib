@@ -34,6 +34,11 @@ class AgentRegistryRuntimeIntegrationTest {
 		}
 
 		@Override
+		public String conversationPreview(int maxChars) {
+			return "recording handle";
+		}
+
+		@Override
 		public void close() {
 			this.closeCount++;
 		}

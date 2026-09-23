@@ -100,6 +100,38 @@ class EmbodimentConfigTest {
 	}
 
 	@Test
+	void resolveNamedProfileReportsRoutingTargetName() throws Exception {
+		// WP-8 的 /inspect 要显示「用的是哪个 profile」——名字才能回到配置文件里那一行，
+		// 而 protocol/model 只能说明「用了什么」。
+		HostConfig cfg = loadSample(SAMPLE_TOML);
+		HostConfig.NamedProfile named = cfg.resolveNamedProfile("village_npc");
+		assertEquals("quest_giver", named.name());
+		assertEquals("gpt-4o-mini", named.profile().modelName());
+	}
+
+	@Test
+	void resolveNamedProfileReportsDefaultForEveryFallback() throws Exception {
+		HostConfig cfg = loadSample(SAMPLE_TOML);
+		// 显式指向 default、未配置路由：都回退 [default]，名字与模型都取自该段
+		for (String agentType : List.of("demo_agent", "no_such_type")) {
+			HostConfig.NamedProfile named = cfg.resolveNamedProfile(agentType);
+			assertEquals("default", named.name(), agentType);
+			assertEquals("claude-sonnet-4-5", named.profile().modelName(), agentType);
+		}
+
+		HostConfig dangling = loadSample("""
+			routing = ["some_type=ghost_profile"]
+
+			[default]
+			protocol = "openai"
+			base_url = "https://api.openai.com/v1"
+			api_key = ""
+			model_name = "gpt-4o-mini"
+			""");
+		assertEquals("default", dangling.resolveNamedProfile("some_type").name());
+	}
+
+	@Test
 	void danglingRoutingFallsBackToDefaultWithoutThrowing() throws Exception {
 		HostConfig cfg = loadSample("""
 			routing = ["some_type=ghost_profile"]
@@ -141,6 +173,7 @@ class EmbodimentConfigTest {
 		assertTrue(def.isOpenAI());
 		assertEquals("https://api.openai.com/v1", def.baseUrl());
 		assertEquals("gpt-4o-mini", def.modelName());
+		assertNotNull(def.apiKey());
 		assertTrue(def.apiKey().isEmpty());
 		assertTrue(cfg.resolveProfile("whatever").isOpenAI());
 	}

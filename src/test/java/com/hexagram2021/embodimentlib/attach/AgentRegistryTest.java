@@ -183,6 +183,11 @@ class AgentRegistryTest {
 			}
 
 			@Override
+			public String conversationPreview(int maxChars) {
+				return "throwing handle";
+			}
+
+			@Override
 			public void close() {
 				throw new IllegalStateException("boom");
 			}
@@ -217,7 +222,7 @@ class AgentRegistryTest {
 					try {
 						start.await();
 						registry.register(AgentTestSupport.entry("village_npc", "s-1", AgentHostSide.SERVER, agent));
-					} catch (InterruptedException interruptedException) {
+					} catch (InterruptedException _) {
 						Thread.currentThread().interrupt();
 					} finally {
 						done.countDown();

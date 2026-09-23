@@ -28,6 +28,15 @@ final class StubHandle implements EmbodiedAgentHandle {
 	}
 
 	@Override
+	public String conversationPreview(int maxChars) {
+		// 与运行时实现保持同一契约：非正上限抛 IAE（本桩不做截断，因为没有内容可截）。
+		if (maxChars < 1) {
+			throw new IllegalArgumentException("maxChars must be positive, got " + maxChars);
+		}
+		return "stub session preview";
+	}
+
+	@Override
 	public void close() {
 		// 模拟 AgentScope 的幂等关闭：重复调用不应有副作用。
 		if (this.everClosed.compareAndSet(false, true)) {

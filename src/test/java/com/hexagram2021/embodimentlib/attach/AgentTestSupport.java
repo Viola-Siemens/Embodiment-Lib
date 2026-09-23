@@ -95,6 +95,15 @@ final class AgentTestSupport {
 		}
 
 		@Override
+		public String conversationPreview(int maxChars) {
+			// 桩的预览只要能证明「契约被满足」即可：不超过上限、与身份相关。
+			if (maxChars < 1) {
+				throw new IllegalArgumentException("maxChars must be positive, got " + maxChars);
+			}
+			return "FakeAgent[" + this.name + "] state=" + this.state;
+		}
+
+		@Override
 		public void close() {
 			// 幂等：重复关闭只累加计数，不抛异常。注册表的替换与注销两条路径
 			// 都可能对同一句柄调用 close()，非幂等实现会造成重复释放。

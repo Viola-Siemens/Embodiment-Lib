@@ -104,16 +104,31 @@ public final class HostConfig {
 	 * @return 该 agent-type 应使用的 profile；任何异常路径均回退默认 profile
 	 */
 	public AgentProfile resolveProfile(String agentType) {
+		return resolveNamedProfile(agentType).profile();
+	}
+
+	/**
+	 * 解析 agent-type 对应的 profile，<b>并给出它在配置里的名字</b>。
+	 * <p>
+	 * 与 {@link #resolveProfile} 是同一条路径（后者只是丢弃名字），因为
+	 * {@code /embodimentlib inspect}（WP-8）要显示「这个类型用的是哪个 profile」，
+	 * 而运维真正想知道的往往正是<b>名字</b>——protocol/model 只能说明「用了什么」，
+	 * 名字才能回到配置文件里那一行。回退时名字为 {@link #DEFAULT_PROFILE_NAME}。
+	 *
+	 * @param agentType 智能体类型
+	 * @return 名字 + profile 的组合；任何异常路径均回退 {@code [default]}
+	 */
+	public NamedProfile resolveNamedProfile(String agentType) {
 		String profileName = routingMap().get(agentType);
 		if (profileName == null || profileName.isBlank() || DEFAULT_PROFILE_NAME.equals(profileName)) {
-			return this.defaultProfile();
+			return new NamedProfile(DEFAULT_PROFILE_NAME, this.defaultProfile());
 		}
 		AgentProfile profile = profilesMap().get(profileName);
 		if (profile == null) {
 			LOGGER.warn("routing[{}] references undefined profile '{}'; falling back to [default]", agentType, profileName);
-			return this.defaultProfile();
+			return new NamedProfile(DEFAULT_PROFILE_NAME, this.defaultProfile());
 		}
-		return profile;
+		return new NamedProfile(profileName, profile);
 	}
 
 	/** 配置加载完成后校验路由引用与 JSON 可解析性；仅记录日志，不抛异常（解析期已安全回退）。 */
@@ -200,7 +215,7 @@ public final class HostConfig {
 			throw new IllegalArgumentException("profile is not a JSON object: " + ex.getMessage());
 		}
 		String name = stringField(object, PROFILE_NAME_FIELD);
-		if (name == null || name.isBlank()) {
+		if (name.isBlank()) {
 			throw new IllegalArgumentException("profile JSON missing required string field '" + PROFILE_NAME_FIELD + "': " + json);
 		}
 		try {

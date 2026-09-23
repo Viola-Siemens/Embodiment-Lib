@@ -256,6 +256,7 @@ public final class EmbodiedAgent implements EmbodiedAgentHandle {
 	 * @param maxChars 最大字符数
 	 * @return 截断后的预览文本
 	 */
+	@Override
 	public String conversationPreview(int maxChars) {
 		if (maxChars < 1) {
 			throw new IllegalArgumentException("maxChars must be positive, got " + maxChars);

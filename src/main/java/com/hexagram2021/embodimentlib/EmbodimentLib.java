@@ -2,6 +2,7 @@ package com.hexagram2021.embodimentlib;
 
 import com.hexagram2021.embodimentlib.attach.AgentLifecycle;
 import com.hexagram2021.embodimentlib.attach.AttachmentTypes;
+import com.hexagram2021.embodimentlib.command.EmbodimentCommandTree;
 import com.hexagram2021.embodimentlib.config.EmbodimentConfig;
 import com.hexagram2021.embodimentlib.gametest.ConfigGameTests;
 import com.hexagram2021.embodimentlib.memory.SessionLifecycle;
@@ -11,6 +12,7 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.config.ModConfigEvent;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +50,8 @@ public final class EmbodimentLib {
 		FollowService.register();
 		// WP-4：会话持久化的保存时机（实体消失 → 写盘并摘缓存；存档/停服 → flushAll）
 		SessionLifecycle.register();
+		// WP-8：/embodimentlib inspect（含 /emb 别名）命令树
+		NeoForge.EVENT_BUS.addListener(EmbodimentCommandTree::register);
 
 		modEventBus.addListener(this::onConfigLoading);
 		modEventBus.addListener(this::onRegisterGameTests);

@@ -29,6 +29,21 @@ public interface EmbodiedAgentHandle extends AutoCloseable {
 	List<ToolCallRecord> recentToolCalls();
 
 	/**
+	 * 会话预览的截断文本（PLAN WP-8 用它填充 {@code /embodimentlib inspect} 的会话一栏）。
+	 * <p>
+	 * 之所以放进接口而不是让命令自己去 {@code instanceof} 具体实现：命令层只应依赖句柄契约，
+	 * 否则 WP-3 的具体类型就成了事实上的公开 API，改动它会连带牵动命令。
+	 * <p>
+	 * <b>隐私</b>：实现方只需保证「不超过 {@code maxChars}」与「不含 api_key」，
+	 * 但不得返回完整的会话原文——预览的用途是让人判断「这个会话在聊什么」。
+	 *
+	 * @param maxChars 最大字符数（必须为正）
+	 * @return 截断后的预览文本；无历史时返回同一份身份摘要
+	 * @throws IllegalArgumentException {@code maxChars} 非正
+	 */
+	String conversationPreview(int maxChars);
+
+	/**
 	 * 关闭句柄并释放底层资源（模型客户端、会话刷写等）。
 	 * <p>
 	 * 必须幂等；实现<b>不得</b>抛出受检异常。
